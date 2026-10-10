@@ -151,6 +151,51 @@ async function control(type) {
   await chrome.storage.local.set({ job: { ...job, status, owner: null, log } });
 }
 
+async function fetchReport(full) {
+  showError('');
+  $('reportMsg').hidden = true;
+  $('reportText').hidden = true;
+  const res = await sendTo(await targetTabId(), { type: 'faa:diagnose', full });
+  if (!res?.ok) {
+    showError(NOT_FLOW);
+    return null;
+  }
+  return res.report;
+}
+
+function reportMessage(text) {
+  $('reportMsg').hidden = false;
+  $('reportMsg').textContent = text;
+}
+
+async function copyReport() {
+  const report = await fetchReport(false);
+  if (!report) return;
+  const text = JSON.stringify(report, null, 2);
+  try {
+    await navigator.clipboard.writeText(text);
+    reportMessage('Kısa rapor panoya kopyalandı. Sohbete yapıştırabilirsiniz.');
+  } catch {
+    // Clipboard can be blocked; let the user copy it by hand.
+    $('reportText').hidden = false;
+    $('reportText').value = text;
+    $('reportText').select();
+    reportMessage('Panoya kopyalanamadı; aşağıdaki metni seçip kopyalayın.');
+  }
+}
+
+async function downloadReport() {
+  const report = await fetchReport(true);
+  if (!report) return;
+  const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `flow-tani-raporu-${report.at.replace(/[:.]/g, '-')}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  reportMessage(`Tam rapor indirildi (${Math.round(blob.size / 1024)} KB). Göndermeden önce içine göz atabilirsiniz.`);
+}
+
 // ---------------------------------------------------------------- render
 
 function fmtTime(t) {
@@ -265,6 +310,8 @@ async function init() {
   $('stop').addEventListener('click', () => control('faa:stop'));
   $('next').addEventListener('click', () => control('faa:next'));
   $('clear').addEventListener('click', () => chrome.storage.local.remove('job'));
+  $('copyReport').addEventListener('click', copyReport);
+  $('downloadReport').addEventListener('click', downloadReport);
   $('restore').addEventListener('click', async () => {
     settings = faaMergeSettings();
     fillForm(settings);

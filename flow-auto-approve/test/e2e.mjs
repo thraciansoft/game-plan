@@ -4,8 +4,8 @@
 //
 //   node test/e2e.mjs            (uses a local or global `playwright` install)
 
-import { execSync } from 'node:child_process';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { execFileSync, execSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -177,8 +177,42 @@ await jobScenario('mesaj başına 20 prompt', 'composer=textarea', { promptsPerM
   check('panel: mesaj sırası doğru', kinds(st.messages) === 'GEN D D RENAME E E', kinds(st.messages));
   checkImages('panel', st, 45);
   check('panel: durum "Tamamlandı"', (await panel.textContent('#statusChip')) === 'Tamamlandı');
+
+  const [download] = await Promise.all([panel.waitForEvent('download'), panel.click('#downloadReport')]);
+  const full = JSON.parse(readFileSync(await download.path(), 'utf8'));
+  check('panel: tam rapor indirildi', !!full.html && full.detection?.input?.tag === 'textarea');
+  await panel.click('#copyReport');
+  await panel.waitForTimeout(300);
+  check('panel: kısa rapor hazırlandı', await panel.isVisible('#reportMsg'), await panel.textContent('#reportMsg'));
   await panel.screenshot({ path: path.join(tmpdir(), 'faa-panel.png'), fullPage: true });
   await panel.close();
+  await page.close();
+}
+
+// Diagnostic report: finds the chat box and buttons, strips scripts and media
+// links, and the replay script detects the same things in the snapshot.
+{
+  await reset({ autoReply: false });
+  const { page, tabId } = await openFlow('composer=textarea');
+  await page.evaluate((t) => mockUserSays(t), makePrompts(25).map((p, i) => `${i + 1}. ${p}`).join('\n\n'));
+  await page.waitForFunction(() => mockState.images.length === 20 && !mockState.busy, null, { timeout: 30000 });
+  await page.evaluate(() => {
+    const img = document.createElement('img');
+    img.src = 'https://lh3.googleusercontent.com/gizli-imzali-link';
+    document.body.appendChild(img);
+  });
+  await page.waitForTimeout(500);
+  const report = await worker.evaluate((id) =>
+    chrome.tabs.sendMessage(id, { type: 'faa:diagnose', full: true }).then((r) => r.report), tabId);
+  check('rapor: sohbet kutusu bulundu', report.detection.input?.tag === 'textarea');
+  check('rapor: gönder butonu bulundu', report.detection.send?.ariaLabel === 'Send message');
+  check('rapor: "Devam edeyim mi?" algılandı', report.detection.asked === true, report.transcriptTail.slice(-60));
+  check('rapor: betikler ve görsel linkleri çıkarıldı',
+    !/<script/i.test(report.html) && !report.html.includes('gizli-imzali-link'));
+  const file = path.join(mkdtempSync(path.join(tmpdir(), 'faa-report-')), 'rapor.json');
+  writeFileSync(file, JSON.stringify(report));
+  const out = execFileSync('node', [path.join(here, 'replay.mjs'), file], { encoding: 'utf8' });
+  check('replay: anlık görüntüde aynı sohbet kutusu bulundu', out.includes('yeniden     : {"tag":"textarea"'), out.split('\n')[3]);
   await page.close();
 }
 

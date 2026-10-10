@@ -95,6 +95,23 @@ sorularına **Devam et** yazar. Bunu paneldeki onay kutusundan kapatabilirsiniz.
 
 ## Sorun giderme
 
+**Tanı raporu:** Panelin altındaki **Tanı raporu** bölümü, eklentinin Flow'da
+ne gördüğünü kaydeder. Raporu Flow "devam edeyim mi?" diye sorarken alın.
+
+- **📋 Kısa rapor:** Panoya kopyalanır. Şunları içerir: bulunan sohbet kutusu,
+  gönder ve durdur butonları, sohbet kutusunun yanındaki butonlar ve
+  eklentinin okuduğu son mesaj metni.
+- **⬇ Tam rapor:** Kısa raporun yanında sayfanın HTML kopyasını da içeren bir
+  `.json` dosyası indirir. Betikler, görsel/video linkleri ve diğer bağlantılar
+  çıkarılır, ama sohbet metinleri ve promptlar içinde kalır. Göndermeden önce
+  içine göz atın.
+
+  Bu repo herkese açık olduğu için raporu repoya yüklemeyin. Geliştirici tam
+  raporu `node test/replay.mjs rapor.json` ile kendi tarayıcısında yeniden
+  açıp eklentinin aynı öğeleri bulup bulmadığını kontrol edebilir.
+
+Diğer sorunlar:
+
 - **"Bu sekmede eklenti çalışmıyor":** Flow sekmesine geçin. Eklentiyi yeni
   yüklediyseniz sayfayı yenileyin.
 - **"Sohbet kutusu bulunamadı":** Gelişmiş ayarlara sohbet kutusunun CSS

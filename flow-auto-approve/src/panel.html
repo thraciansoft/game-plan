@@ -74,6 +74,19 @@
     <p id="standaloneCount" class="muted"></p>
   </section>
 
+  <section>
+    <div class="row between">
+      <strong>Tanı raporu</strong>
+      <span class="buttons">
+        <button id="copyReport" type="button" title="Algılanan sohbet kutusu, butonlar ve son mesajlar">📋 Kısa rapor</button>
+        <button id="downloadReport" type="button" title="Kısa rapor + sayfanın HTML kopyası (betikler ve görsel linkleri çıkarılır)">⬇ Tam rapor</button>
+      </span>
+    </div>
+    <p class="muted">En faydalısı, Flow "devam edeyim mi?" diye sorarken alınan rapordur.</p>
+    <p id="reportMsg" class="muted" hidden></p>
+    <textarea id="reportText" rows="6" readonly hidden></textarea>
+  </section>
+
   <details>
     <summary>Gelişmiş ayarlar</summary>
     <div class="row">

@@ -486,6 +486,90 @@
     }
   }
 
+  // ---------------------------------------------------------- diagnostics
+
+  function describe(el) {
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    const cls = typeof el.className === 'string' ? el.className : el.getAttribute('class');
+    return {
+      tag: el.tagName.toLowerCase(),
+      id: el.id || undefined,
+      class: short(cls, 160) || undefined,
+      role: el.getAttribute('role') || undefined,
+      ariaLabel: el.getAttribute('aria-label') || undefined,
+      title: el.getAttribute('title') || undefined,
+      placeholder: el.getAttribute('placeholder') || el.getAttribute('data-placeholder') || undefined,
+      contenteditable: el.getAttribute('contenteditable') ?? undefined,
+      text: short(textOf(el, 200), 80) || undefined,
+      visible: isVisible(el),
+      disabled: !isEnabled(el) || undefined,
+      rect: [r.left, r.top, r.width, r.height].map(Math.round),
+    };
+  }
+
+  // The page without scripts and media URLs (signed image links would give
+  // access to the user's images), small enough to attach to a bug report.
+  function pageSnapshot(limit = 3000000) {
+    const build = (dropStyles) => {
+      const clone = document.documentElement.cloneNode(true);
+      clone.querySelectorAll('script, noscript, iframe, #faa-host').forEach((n) => n.remove());
+      if (dropStyles) clone.querySelectorAll('style, link').forEach((n) => n.remove());
+      for (const el of clone.querySelectorAll('*')) {
+        for (const { name, value } of Array.from(el.attributes)) {
+          if (name.startsWith('on')) el.removeAttribute(name);
+          else if (['src', 'srcset', 'poster', 'href', 'action', 'data-src'].includes(name)) el.setAttribute(name, '');
+          else if (value.length > 300) el.setAttribute(name, value.slice(0, 300));
+        }
+      }
+      return `<!doctype html>\n${clone.outerHTML}`;
+    };
+    let html = build(false);
+    if (html.length > limit) html = build(true);
+    return html.length > limit ? html.slice(0, limit) : html;
+  }
+
+  function diagnose() {
+    const input = findChatInput();
+    const near = [];
+    if (input) {
+      const inputRect = input.getBoundingClientRect();
+      for (const el of deepQueryAll(CLICKABLE)) {
+        if (ownUi(el) || gap(el.getBoundingClientRect(), inputRect) > NEAR_PX) continue;
+        near.push(describe(el));
+        if (near.length >= 30) break;
+      }
+    }
+    const now = Date.now();
+    return {
+      version: chrome.runtime.getManifest().version,
+      at: new Date().toISOString(),
+      url: location.origin + location.pathname,
+      userAgent: navigator.userAgent,
+      detection: {
+        input: describe(input),
+        send: input ? describe(findSendButton(input)) : null,
+        stop: input ? describe(findNearButton(input, compiled.stop)) : null,
+        busy: agentBusy(),
+        asked: agentAsked(),
+        idleSec: Math.round((now - mon.lastAny) / 1000),
+        textIdleSec: Math.round((now - Math.max(mon.lastText, mon.markAt)) / 1000),
+      },
+      inputCandidates: deepQueryAll(INPUTS).filter((el) => !ownUi(el)).slice(0, 15).map(describe),
+      buttonsNearInput: near,
+      transcriptTail: mon.transcript.slice(-1500),
+      job: job && {
+        status: job.status,
+        stepIndex: job.stepIndex,
+        stepSent: job.stepSent,
+        replies: job.replies,
+        steps: job.steps.map(({ kind, label, expected }) => ({ kind, label, expected })),
+        log: (job.log || []).slice(-30),
+      },
+      settings,
+    };
+  }
+
   // ------------------------------------------------------------- commands
 
   function newJob(prompts, tabId) {
@@ -522,6 +606,11 @@
           textIdleSec: Math.round((Date.now() - Math.max(mon.lastText, mon.markAt)) / 1000),
           asked: agentAsked(),
         };
+      case 'faa:diagnose': {
+        const report = diagnose();
+        if (msg.full) report.html = pageSnapshot();
+        return { ok: true, report };
+      }
       case 'faa:start': {
         if (mine && job.status === 'running') return { ok: false, error: 'Bu sekmede zaten çalışan bir görev var.' };
         const prompts = (msg.prompts || []).filter(Boolean);
