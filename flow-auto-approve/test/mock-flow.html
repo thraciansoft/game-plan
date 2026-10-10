@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<title>Mock Flow</title>
+<style>
+  body { font-family: sans-serif; margin: 0; display: flex; height: 100vh; }
+  main { flex: 1; overflow: auto; padding: 12px; }
+  #grid { display: grid; grid-template-columns: repeat(12, 40px); gap: 4px; }
+  #grid div { width: 40px; height: 40px; background: #9cf; }
+  aside { width: 360px; display: flex; flex-direction: column; border-left: 1px solid #ccc; }
+  #log { flex: 1; overflow: auto; padding: 8px; }
+  .msg { margin: 6px 0; padding: 6px 8px; border-radius: 8px; background: #eee; }
+  .msg.user { background: #def; text-align: right; }
+  .composer { display: flex; gap: 6px; padding: 8px; border-top: 1px solid #ccc; }
+  .composer textarea, .composer [contenteditable] { flex: 1; min-height: 30px; border: 1px solid #999; }
+  .icon { font-family: monospace; font-size: 10px; }
+  [role="dialog"] { position: fixed; inset: 30% 30% auto; background: #fff; border: 1px solid #333; padding: 16px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <!-- Distractor: a "Continue" button with no approval question around it. -->
+    <button id="distractor"><span class="icon">edit</span>Continue editing</button>
+    <span>Toplam: <b id="total">0</b></span>
+  </header>
+  <div id="grid"></div>
+</main>
+<aside>
+  <div id="log"></div>
+  <div class="composer" id="composer"></div>
+</aside>
+<script>
+  const params = new URLSearchParams(location.search);
+  const UI = params.get('ui') || 'button';
+  const BATCH = 24;
+  const TARGET = Number(params.get('target') || 72);
+  const state = { total: 0, distractorClicks: 0, userMessages: [], questions: 0, running: false };
+  window.mockState = state;
+
+  const log = document.getElementById('log');
+  const grid = document.getElementById('grid');
+  const composer = document.getElementById('composer');
+
+  document.getElementById('distractor').addEventListener('click', () => { state.distractorClicks++; });
+
+  function addMessage(text, who = 'agent') {
+    const div = document.createElement('div');
+    div.className = `msg ${who}`;
+    div.textContent = text;
+    log.appendChild(div);
+    return div;
+  }
+
+  function generateBatch() {
+    state.running = true;
+    let made = 0;
+    const timer = setInterval(() => {
+      const img = document.createElement('div');
+      grid.appendChild(img);
+      state.total++;
+      made++;
+      document.getElementById('total').textContent = state.total;
+      if (made === BATCH || state.total >= TARGET) {
+        clearInterval(timer);
+        state.running = false;
+        if (state.total < TARGET) askToContinue();
+        else addMessage('Tamamlandı.');
+      }
+    }, 100); // a batch (2.4s) outlasts the extension's cooldown, like real generations
+  }
+
+  function askToContinue() {
+    state.questions++;
+    if (UI === 'button') {
+      const div = addMessage(`${state.total} görsel oluşturdum. Devam etmemi ister misiniz? `);
+      const row = document.createElement('div');
+      const yes = document.createElement('button');
+      yes.innerHTML = '<span class="icon">check</span>Devam et';
+      const no = document.createElement('button');
+      no.textContent = 'Durdur';
+      yes.onclick = () => { row.remove(); addMessage('Devam et', 'user'); generateBatch(); };
+      no.onclick = () => { row.remove(); addMessage('Durduruldu', 'user'); };
+      row.append(yes, no);
+      div.appendChild(row);
+    } else if (UI === 'dialog') {
+      const dlg = document.createElement('div');
+      dlg.setAttribute('role', 'dialog');
+      dlg.innerHTML = `<p>You've generated ${state.total} images. Do you want to continue?</p>
+        <button data-a="cancel">Cancel</button>
+        <div role="button" tabindex="0" data-a="ok"><span class="icon">arrow_forward</span>Continue</div>`;
+      dlg.addEventListener('click', (e) => {
+        const a = e.target.closest('[data-a]')?.dataset.a;
+        if (!a) return;
+        dlg.remove();
+        if (a === 'ok') generateBatch();
+      });
+      document.body.appendChild(dlg);
+    } else {
+      // Chat-only: the agent streams its question and waits for a typed reply.
+      const div = addMessage('');
+      const words = `${state.total} görsel hazır. Devam edeyim mi?`.split(' ');
+      let i = 0;
+      const t = setInterval(() => {
+        div.textContent += (i ? ' ' : '') + words[i++];
+        if (i === words.length) clearInterval(t);
+      }, 40);
+    }
+  }
+
+  function onUserMessage(text) {
+    if (!text.trim()) return;
+    state.userMessages.push(text);
+    addMessage(text, 'user');
+    if (/evet|devam|yes|continue/i.test(text) && !state.running && state.total < TARGET) generateBatch();
+  }
+
+  if (UI === 'chat-textarea') {
+    // Emulates React's controlled input: a value tracker on the instance means
+    // plain `el.value = x` from page scripts is ignored by onChange.
+    const ta = document.createElement('textarea');
+    ta.placeholder = 'Mesaj yazın';
+    const send = document.createElement('button');
+    send.setAttribute('aria-label', 'Send message');
+    send.innerHTML = '<span class="icon">arrow_upward</span>';
+    send.disabled = true;
+    const desc = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
+    let tracked = '';
+    let reactValue = '';
+    Object.defineProperty(ta, 'value', {
+      configurable: true,
+      get() { return desc.get.call(this); },
+      set(v) { tracked = String(v); desc.set.call(this, v); },
+    });
+    ta.addEventListener('input', () => {
+      const actual = desc.get.call(ta);
+      if (actual === tracked) return; // React would bail out here
+      tracked = actual;
+      reactValue = actual;
+      send.disabled = !reactValue.trim() || state.running;
+    });
+    send.addEventListener('click', () => {
+      onUserMessage(reactValue);
+      reactValue = '';
+      ta.value = '';
+      send.disabled = true;
+    });
+    composer.append(ta, send);
+  } else if (UI === 'chat-ce') {
+    const ce = document.createElement('div');
+    ce.contentEditable = 'true';
+    ce.setAttribute('role', 'textbox');
+    ce.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        onUserMessage(ce.textContent);
+        ce.textContent = '';
+      }
+    });
+    composer.append(ce);
+  } else {
+    const ta = document.createElement('textarea');
+    composer.append(ta);
+  }
+
+  addMessage('Bir kedinin 72 farklı görselini oluştur', 'user');
+  // Start after the extension's startup grace period, like a real batch would.
+  setTimeout(generateBatch, Number(params.get('startDelay') || 3500));
+</script>
+</body>
+</html>

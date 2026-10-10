@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <title>Flow Oto-Onay</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <div class="title">
+      <img src="../icons/icon32.png" alt="" width="20" height="20">
+      <h1>Flow Oto-Onay</h1>
+    </div>
+    <label class="switch" title="Aç / kapat">
+      <input type="checkbox" id="enabled">
+      <span></span>
+    </label>
+  </header>
+
+  <section class="stats">
+    <div class="count"><strong id="count">0</strong> otomatik onay</div>
+    <button id="reset" class="link">Sıfırla</button>
+    <p id="lastAction" class="muted"></p>
+    <p id="lastNote" class="note" hidden></p>
+  </section>
+
+  <section>
+    <h2>Nasıl onaylansın?</h2>
+    <div class="modes">
+      <label><input type="radio" name="mode" value="both"> İkisi de <small>(önerilen)</small></label>
+      <label><input type="radio" name="mode" value="click"> Butona tıkla</label>
+      <label><input type="radio" name="mode" value="message"> Sohbete yaz</label>
+    </div>
+    <label class="field">Sohbete yazılacak cevap
+      <input type="text" id="replyText">
+    </label>
+    <button id="pick" class="primary">🎯 Onay butonunu sayfada seç</button>
+    <p id="pickMsg" class="muted" hidden></p>
+  </section>
+
+  <section>
+    <h2>Güvenlik</h2>
+    <div class="row">
+      <label class="field">Bekleme (ms)
+        <input type="number" id="delayMs" min="0" step="100">
+      </label>
+      <label class="field">Soğuma (ms)
+        <input type="number" id="cooldownMs" min="1000" step="500">
+      </label>
+      <label class="field">Maks. onay
+        <input type="number" id="maxApprovals" min="0" step="1" title="0 = sınırsız">
+      </label>
+    </div>
+    <p class="muted">Maks. onay 0 ise sınırsız. Her onay yeni bir parti (kredi) başlatır.</p>
+  </section>
+
+  <details>
+    <summary>Metinler ve gelişmiş ayarlar</summary>
+    <label class="field">Onay butonu metinleri <small>(her satıra bir tane)</small>
+      <textarea id="buttonPhrases" rows="4"></textarea>
+    </label>
+    <label class="check"><input type="checkbox" id="requireTrigger"> Butona tıklamak için yakınında tetik metni gerekli</label>
+    <label class="field">Tetik ifadeleri <small>(sorunun içinde geçen metin)</small>
+      <textarea id="triggerPhrases" rows="4"></textarea>
+    </label>
+    <label class="field">Asla tıklanmayacak metinler
+      <textarea id="excludePhrases" rows="3"></textarea>
+    </label>
+    <label class="field">Gönder butonu metinleri / ikon adları
+      <textarea id="sendPhrases" rows="2"></textarea>
+    </label>
+    <label class="field">Onay butonu CSS seçici <small>(isteğe bağlı)</small>
+      <input type="text" id="approveSelector" placeholder="ör. button[data-testid=continue]">
+    </label>
+    <label class="field">Sohbet kutusu CSS seçici <small>(isteğe bağlı)</small>
+      <input type="text" id="inputSelector" placeholder="ör. textarea">
+    </label>
+    <label class="field">Gönder butonu CSS seçici <small>(isteğe bağlı)</small>
+      <input type="text" id="sendSelector" placeholder="ör. button[aria-label=Send]">
+    </label>
+    <label class="check"><input type="checkbox" id="debug"> Konsola ayrıntılı kayıt yaz</label>
+    <button id="restore" class="link">Varsayılanlara dön</button>
+  </details>
+
+  <footer id="saved" class="muted">Değişiklikler otomatik kaydedilir.</footer>
+
+  <script src="defaults.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
