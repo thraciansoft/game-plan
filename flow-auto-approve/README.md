@@ -1,14 +1,26 @@
 # Flow Oto-Onay (Chrome eklentisi)
 
-Google Flow her toplu üretimden sonra (ör. 24 görselde bir) sohbette
-"devam edeyim mi?" diye onay istiyor. Bu eklenti o soruyu algılar ve onayı sizin
-yerinize verir:
+Promptlarınızı Google Flow'un sohbetine toplu gönderir. Flow'un her partiden
+sonra sorduğu onayları kendisi verir. Bütün görseller bitince de görselleri
+prompt sırasına göre `gorsel1`, `gorsel2`… diye adlandırtır.
 
-- **Butona tıklar.** Sorunun yanında "Devam et", "Onayla", "Continue" gibi bir
-  buton varsa ona tıklar.
-- **Sohbete yazar.** Buton yoksa sohbet kutusuna `Evet, devam et` yazıp gönderir.
+## Nasıl çalışır?
 
-Varsayılan mod **İkisi de**'dir: önce buton aranır, buton yoksa mesaj yazılır.
+Örnek: 120 prompt girdiniz.
+
+1. Eklenti sohbete numaralı 120 promptu tek mesajda gönderir ve görsellerin
+   **20'şer** oluşturulmasını ister.
+2. Flow her 20 görselde bir "Devam edeyim mi?" diye sorar. Eklenti sohbete
+   **Devam et** yazar. Bu adımda Flow 5 kez sorar.
+3. 120 görsel bitince eklenti şu mesajı gönderir: *"1. prompttan oluşan
+   görselin adı gorsel1, 2. prompttan oluşanın adı gorsel2 olsun … son görsel
+   gorsel120"*.
+4. Flow her 20 görselde bir "Kalanları isimlendireyim mi?" diye sorar. Eklenti
+   **Evet, devam et** yazar.
+5. Bitince panelde **Tamamlandı** yazar.
+
+Eklenti yalnızca sohbete yazar, sayfadaki hiçbir butona tıklamaz. Tek istisna,
+yazdığı mesajı göndermek için sohbet kutusunun gönder butonudur.
 
 ## Kurulum
 
@@ -17,71 +29,98 @@ Varsayılan mod **İkisi de**'dir: önce buton aranır, buton yoksa mesaj yazıl
 2. Chrome'da `chrome://extensions` sayfasını açın.
 3. Sağ üstten **Geliştirici modu**'nu açın.
 4. **Paketlenmemiş öğe yükle**'ye tıklayıp `flow-auto-approve` klasörünü seçin.
+   Eski sürüm yüklüyse önce onu kaldırın veya ↻ ile yenileyin.
 5. Google Flow sekmesi açıksa sayfayı yenileyin (F5).
 
-Araç çubuğundaki ikonun üzerindeki sayı, şimdiye kadar verilen otomatik onay
-sayısını gösterir. `OFF` kapalı, `MAX` ise limitin dolduğu anlamına gelir.
+## Kullanım
 
-## İlk kullanım: onay butonunu öğretin
+1. Google Flow'da projenizi açın.
+2. Araç çubuğundaki eklenti ikonuna tıklayın. Sağda **yan panel** açılır ve
+   sayfada çalışırken açık kalır.
+3. Promptları kutuya yazın veya yapıştırın, **her promptun arasına bir boş
+   satır** bırakın:
 
-Flow'un onay ekranındaki metin farklı olabilir. Eklenti ilk seferde çalışmazsa:
+   ```
+   Sisli bir ormanda yürüyen kırmızı tilki
 
-1. Flow onay istediğinde eklenti ikonuna tıklayın.
-2. **🎯 Onay butonunu sayfada seç**'e basın.
-3. Sayfada onay/devam butonuna bir kez tıklayın. Bu tıklama Flow'a gitmez,
-   yalnızca butonun metni kaydedilir.
-4. Ardından butona kendiniz bir kez tıklayın. Sonraki her 24'lük partide eklenti
-   bu butona kendisi tıklayacak.
+   Gün batımında İstanbul silüeti, yağlı boya
 
-Ekranda "çevresinde tetik ifadesi yok" uyarısı çıkarsa uyarıdaki sorunun bir
-parçasını **Metinler ve gelişmiş ayarlar → Tetik ifadeleri** listesine ekleyin.
-Örneğin `devam etmemi ister misiniz` ekleyebilirsiniz. Ya da
-**Butona tıklamak için yakınında tetik metni gerekli** seçeneğini kapatın.
+   Kar altında eski bir tren istasyonu
+   ```
 
-Onay butonu yoksa ve Flow sizden yazılı cevap bekliyorsa mod olarak
-**Sohbete yaz**'ı seçin. Gerekirse cevabı da değiştirin.
+   İsterseniz aynı biçimdeki bir `.txt` dosyasını **📄 .txt dosyasından yükle**
+   ile açabilirsiniz. Kutunun altında kaç prompt algılandığını görürsünüz.
+4. **Parti büyüklüğü** (20) ve **İsim öneki** (`gorsel`) değerlerini kontrol edin.
+5. **▶ Başlat**'a basın. İlerlemeyi ve yapılan her adımı panelde görürsünüz.
 
-## Ayarlar
+| Buton | İşlevi |
+|---|---|
+| ⏸ Duraklat | Eklenti cevap yazmayı bırakır. |
+| ⏵ Sürdür | Kaldığı yerden devam eder. Sayfa yenilendiyse de bununla devam edilir. |
+| ⏭ Sonraki adım | Mevcut adımı bitmiş sayar ve sıradaki mesajı gönderir. Flow işi bitirdiği hâlde eklenti beklemeye devam ediyorsa kullanın. |
+| ■ Durdur | Görevi sonlandırır. |
+
+**Gelişmiş ayarlar → Gönderilecek mesajları önizle** ile Flow'a gidecek
+mesajları göndermeden önce görebilirsiniz.
+
+## Eklenti Flow'un sorduğunu nasıl anlıyor?
+
+- **Soru algılama:** Flow'un son mesajında "devam edeyim mi",
+  "isimlendireyim mi", "continue?" gibi bir ifade varsa ve mesaj 3 saniyedir
+  değişmiyorsa eklenti cevap yazar.
+- **Tur sonu kuralı:** Flow tanınmayan bir cümleyle durursa eklenti sayfanın
+  tamamen sakinleşmesini bekler (varsayılan 30 sn). Sonra şöyle karar verir:
+  - Parti sayısına göre beklenen onaylar henüz verilmediyse **Devam et** yazar.
+    120 prompt için bu 5 onaydır.
+  - Beklenen onaylar verildiyse adımı bitmiş sayar ve sonrakine geçer.
+- **Flow meşgulken:** Sohbet kutusunun yanında "Durdur/Stop" butonu
+  görünüyorsa Flow hâlâ çalışıyor demektir. Eklenti bu sırada bir şey yazmaz.
+- **Güvenlik sınırı:** Flow beklenenden 5 kez fazla onay isterse görev
+  duraklatılır. Böylece sonsuz döngü ve gereksiz kredi harcaması olmaz.
+
+Görev yokken de (ör. Flow'a kendiniz yazdığınızda) eklenti "Devam edeyim mi?"
+sorularına **Devam et** yazar. Bunu paneldeki onay kutusundan kapatabilirsiniz.
+
+## Gelişmiş ayarlar
 
 | Ayar | Açıklama |
 |---|---|
-| Bekleme (ms) | Soru göründükten sonra işlem yapmadan önce beklenen süre. Mesajın tamamen yüklenmesi için zaman tanır. |
-| Soğuma (ms) | İki otomatik onay arasındaki en kısa süre. |
-| Maks. onay | Bu kadar onaydan sonra eklenti durur (`0` = sınırsız). Her onay yeni bir parti, yani kredi demektir. Sayaç popup'tan sıfırlanır. |
-| Onay butonu metinleri | Tıklanabilecek butonların metinleri. Tam kelime olarak eşleşir; büyük/küçük harf ve Türkçe karakter farkı önemsizdir. |
-| Tetik ifadeleri | Sorunun içinde geçen metinler, ör. `devam edeyim mi`. Sohbete yazma modu yalnızca bunlardan biri **yeni gelen** bir mesajda görünürse çalışır. |
-| Asla tıklanmayacak metinler | `Durdur`, `İptal`, `Hayır`, `Stop`… Bu metinleri içeren butonlara asla tıklanmaz. |
-| CSS seçiciler | Metinle eşleştirme yetmezse onay butonu, sohbet kutusu ve gönder butonu için doğrudan CSS seçici girilebilir. |
-
-## Güvenlik önlemleri
-
-- Bir buton ancak yanında (ekranda en fazla ~250 px uzakta) bir tetik ifadesi
-  varsa tıklanır. Sayfanın başka bir yerindeki "Continue" butonlarına dokunulmaz.
-- Sohbete yazma yalnızca sayfa açıldıktan **sonra** gelen mesajlara tepki verir.
-  Eski sohbet geçmişine cevap yazılmaz.
-- Eklentinin kendi gönderdiği mesaj tetik sayılmaz, bu yüzden döngüye girmez.
-- Eklenti yalnızca `https://labs.google/*` sayfalarında çalışır. Hiçbir veri
-  dışarı gönderilmez, ayarlar tarayıcınızda (`chrome.storage.local`) kalır.
+| Onay cevabı / İsimlendirme cevabı | Sohbete yazılan cevaplar (`Devam et`, `Evet, devam et`). |
+| Mesaj başına prompt | `0` ise bütün promptlar tek mesajda gider. Flow uzun mesajı kabul etmezse `20` yapın: her 20 prompt ayrı mesajla gönderilir. |
+| Soru bekleme | Soru göründükten sonra cevap yazmadan önce beklenen süre. |
+| Tur bitti sayma | Tur sonu kuralı için sayfanın ne kadar süre sakin kalması gerektiği. Flow partiler arasında uzun süre hiçbir şey göstermiyorsa artırın. |
+| Mesaj şablonları | Flow'a giden üretim ve isimlendirme mesajlarının metni. Yer tutucular: `{adet}` `{parti}` `{baslangic}` `{bitis}` `{toplam}` `{onek}` `{promptlar}`. |
+| Tetik ifadeleri | Flow'un sorusunda geçen ve "onay bekliyorum" anlamına gelen metinler. |
+| CSS seçiciler | Eklenti sohbet kutusunu veya gönder butonunu bulamazsa doğrudan seçici girin. |
 
 ## Sorun giderme
 
-- **Hiçbir şey olmuyor:** Popup'taki uyarı kutusuna bakın. Eklenti neyi
-  bulduğunu veya bulamadığını orada yazar. Ayrıca **Konsola ayrıntılı kayıt yaz**'ı
-  açıp sayfada F12 → Console'da `[Flow Oto-Onay]` satırlarına bakabilirsiniz.
-- **Eklentiyi güncelledim, çalışmıyor:** Flow sekmesini yenileyin.
-- **Tıklıyor ama Flow tepki vermiyor:** Bazı arayüzler yalnızca gerçek fare
-  tıklamalarını kabul eder. Bu durumda onay penceresinin HTML'ini
-  (sağ tık → İncele) paylaşın, eklenti ona göre uyarlanabilir.
+- **"Bu sekmede eklenti çalışmıyor":** Flow sekmesine geçin. Eklentiyi yeni
+  yüklediyseniz sayfayı yenileyin.
+- **"Sohbet kutusu bulunamadı":** Gelişmiş ayarlara sohbet kutusunun CSS
+  seçicisini girin. Seçiciyi Flow'da kutuya sağ tık → İncele ile bulabilirsiniz.
+- **Mesaj yazılıyor ama gitmiyor:** Gönder butonunun CSS seçicisini girin.
+- **Flow bitirdi ama eklenti bekliyor:** **⏭ Sonraki adım**'a basın veya
+  Flow'un soru cümlesini tetik ifadelerine ekleyin.
+- Ayrıntılı kayıt için **Konsola ayrıntılı kayıt yaz**'ı açın. Sonra Flow
+  sayfasında F12 → Console'da `[Flow Oto-Onay]` satırlarına bakın.
 
 Not: Otomasyon, Google'ın kullanım koşullarına veya kota kurallarına takılabilir.
-Kredi harcamasını kontrol altında tutmak için **Maks. onay** ayarını kullanın.
+Flow çok hızlı istek gönderildiğinde de hata verebilir.
 
 ## Test
 
-Sahte bir Flow sayfası üzerinde (`test/mock-flow.html`) eklentiyi gerçek
-Chromium'a yükleyip uçtan uca test eder. Buton, diyalog, textarea ve
-contenteditable sohbet senaryolarının yanı sıra limit, kapalı mod ve öğretme
-modunu da kapsar:
+`test/mock-flow.html`, Flow'un sohbet ajanını taklit eden bir sayfadır: her 20
+görselde durup sorar, sonra görselleri yeniden adlandırır. Test, eklentiyi
+gerçek Chromium'a yükleyip bu sayfa üzerinde tam görevler çalıştırır. Şunları
+kapsar:
+
+- textarea ve zengin metin editörü
+- durdur butonu olan ve olmayan sohbet kutusu
+- tanınmayan soru cümleleri
+- mesaj başına 20 prompt
+- görev dışı otomatik cevap
+- yan panelden başlatma, duraklatma ve sürdürme
 
 ```bash
 npm i -g playwright   # yoksa

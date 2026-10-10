@@ -1,6 +1,6 @@
 // End-to-end test: loads the unpacked extension into Chromium, serves
-// mock-flow.html at a labs.google URL and checks that every "continue?"
-// checkpoint is answered automatically.
+// mock-flow.html (a stand-in for Flow's agent chat) at a labs.google URL and
+// runs whole prompt jobs against it.
 //
 //   node test/e2e.mjs            (uses a local or global `playwright` install)
 
@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const extDir = path.resolve(here, '..');
 const mockHtml = readFileSync(path.join(here, 'mock-flow.html'), 'utf8');
+const FLOW_URL = 'https://labs.google/fx/tools/flow/project/test';
 
 function loadPlaywright() {
   try {
@@ -25,7 +26,6 @@ function loadPlaywright() {
 }
 
 const { chromium } = loadPlaywright();
-
 const context = await chromium.launchPersistentContext(mkdtempSync(path.join(tmpdir(), 'faa-')), {
   channel: 'chromium',
   headless: true,
@@ -33,15 +33,8 @@ const context = await chromium.launchPersistentContext(mkdtempSync(path.join(tmp
 });
 await context.route('https://labs.google/**', (route) =>
   route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: mockHtml }));
-
-let worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
 const extId = new URL(worker.url()).host;
-
-// Small timings so the test runs quickly.
-await worker.evaluate(() => chrome.storage.local.set({
-  settings: { ...FAA_DEFAULTS, delayMs: 300, cooldownMs: 1500 },
-  stats: { ...FAA_STATS_DEFAULTS },
-}));
 
 let failures = 0;
 function check(name, ok, detail = '') {
@@ -49,111 +42,143 @@ function check(name, ok, detail = '') {
   if (!ok) failures++;
 }
 
-async function runScenario(ui, extra = '') {
+// Fast timings so a whole job takes seconds instead of minutes.
+async function reset(patch = {}) {
+  await worker.evaluate((p) => chrome.storage.local.clear().then(() => chrome.storage.local.set({
+    settings: { ...FAA_DEFAULTS, questionIdleMs: 300, turnEndIdleMs: 2000, ...p },
+  })), patch);
+}
+
+const makePrompts = (n) => Array.from({ length: n }, (_, i) => `kırmızı tilki, sahne ${i + 1}, sinematik ışık`);
+
+async function openFlow(query) {
   const page = await context.newPage();
-  const errors = [];
-  page.on('pageerror', (e) => errors.push(String(e)));
-  await page.goto(`https://labs.google/fx/tools/flow/project/test?ui=${ui}${extra}`);
-  await page.waitForFunction(() => window.mockState?.total >= 72 || false, null, { timeout: 30000 })
-    .catch(() => {});
-  await page.waitForTimeout(500);
-  const st = await page.evaluate(() => window.mockState);
-  await page.screenshot({ path: path.join(tmpdir(), `faa-${ui}.png`) });
-  await page.close();
-  return { st, errors };
-}
-
-for (const ui of ['button', 'dialog', 'chat-textarea', 'chat-ce']) {
-  const { st, errors } = await runScenario(ui);
-  check(`${ui}: 72 görsel tamamlandı`, st.total === 72, `toplam=${st.total}, soru=${st.questions}`);
-  check(`${ui}: dikkat dağıtıcı "Continue" butonuna tıklanmadı`, st.distractorClicks === 0);
-  if (ui.startsWith('chat')) {
-    check(`${ui}: tam 2 cevap gönderildi`, st.userMessages.length === 2, JSON.stringify(st.userMessages));
-  }
-  check(`${ui}: sayfa hatası yok`, errors.length === 0, errors.join('; '));
-}
-
-// Click-only mode must not type into the chat.
-await worker.evaluate(() => chrome.storage.local.get('settings').then(({ settings }) =>
-  chrome.storage.local.set({ settings: { ...settings, mode: 'click' } })));
-{
-  const { st } = await runScenario('chat-textarea', '&target=48');
-  check('click modu: sohbete yazmadı', st.userMessages.length === 0 && st.total === 24, `toplam=${st.total}`);
-}
-
-// Limit: with maxApprovals=1 only the first checkpoint is answered.
-await worker.evaluate(() => chrome.storage.local.get('settings').then(({ settings }) =>
-  chrome.storage.local.set({
-    settings: { ...settings, mode: 'both', maxApprovals: 1 },
-    stats: { ...FAA_STATS_DEFAULTS },
-  })));
-{
-  const { st } = await runScenario('button');
-  check('limit: 1 onaydan sonra durdu', st.total === 48, `toplam=${st.total}`);
-}
-
-// Disabled: nothing happens.
-await worker.evaluate(() => chrome.storage.local.get('settings').then(({ settings }) =>
-  chrome.storage.local.set({
-    settings: { ...settings, enabled: false, maxApprovals: 0 },
-    stats: { ...FAA_STATS_DEFAULTS },
-  })));
-{
-  const { st } = await runScenario('button', '&target=48');
-  check('kapalıyken hiçbir şey yapmadı', st.total === 24, `toplam=${st.total}`);
-}
-
-// Teach mode: an unknown label ("Sure thing") gets learned by clicking it once.
-await worker.evaluate(() => chrome.storage.local.set({
-  settings: { ...FAA_DEFAULTS, delayMs: 300, cooldownMs: 1500 },
-  stats: { ...FAA_STATS_DEFAULTS },
-}));
-{
-  const page = await context.newPage();
-  await page.goto('https://labs.google/fx/tools/flow/project/test?ui=none&startDelay=999999');
-  await page.evaluate(() => {
-    const card = document.createElement('div');
-    card.innerHTML = '<p>Batch finished. Should I continue?</p><button id="sure">Sure thing</button>';
-    window.sureClicks = 0;
-    card.querySelector('#sure').onclick = () => { window.sureClicks++; card.remove(); };
-    document.body.appendChild(card);
-  });
-  await page.waitForTimeout(1500);
-  const before = await page.evaluate(() => window.sureClicks);
-  await page.bringToFront();
-  await worker.evaluate(async () => {
-    for (const tab of await chrome.tabs.query({})) {
-      chrome.tabs.sendMessage(tab.id, { type: 'faa:pick' }).catch(() => {});
+  page.on('pageerror', (e) => console.log('page error:', String(e)));
+  await page.goto(`${FLOW_URL}?${query}`);
+  await page.waitForTimeout(3500); // the extension ignores what renders during page load
+  const tabId = await worker.evaluate(async () => {
+    const tabs = await chrome.tabs.query({});
+    const ids = [];
+    for (const t of tabs) {
+      if (await chrome.tabs.sendMessage(t.id, { type: 'faa:ping' }).catch(() => null)) ids.push(t.id);
     }
+    return Math.max(...ids);
   });
+  return { page, tabId };
+}
+
+const startJob = (tabId, prompts) =>
+  worker.evaluate(([id, p]) => chrome.tabs.sendMessage(id, { type: 'faa:start', prompts: p, tabId: id }), [tabId, prompts]);
+
+async function waitJob(status, timeout = 60000) {
+  const end = Date.now() + timeout;
+  for (;;) {
+    const job = await worker.evaluate(() => chrome.storage.local.get('job').then((r) => r.job));
+    if (job?.status === status || Date.now() > end) return job;
+    await new Promise((r) => setTimeout(r, 300));
+  }
+}
+
+const mock = (page) => page.evaluate(() => ({
+  images: mockState.images.map(({ n, name }) => ({ n, name })),
+  messages: mockState.messages,
+  distractorClicks: mockState.distractorClicks || 0,
+}));
+
+function kinds(messages) {
+  return messages.map((m) => {
+    if (m.includes('numaralı')) return 'GEN';
+    if (/adland/i.test(m)) return 'RENAME';
+    if (m === 'Devam et') return 'D';
+    if (m === 'Evet, devam et') return 'E';
+    return `?${m.slice(0, 20)}`;
+  }).join(' ');
+}
+
+function checkImages(name, st, n) {
+  const ordered = st.images.length === n && st.images.every((im, i) => im.n === i + 1);
+  const named = st.images.every((im) => im.name === `gorsel${im.n}`);
+  check(`${name}: ${n} görsel prompt sırasıyla oluştu`, ordered, `adet=${st.images.length}`);
+  check(`${name}: gorsel1…gorsel${n} olarak adlandırıldı`, named,
+    st.images.filter((im) => im.name !== `gorsel${im.n}`).slice(0, 3).map((im) => `${im.n}:${im.name}`).join(' '));
+}
+
+async function jobScenario(name, query, patch, expectedKinds, n = 45) {
+  await reset(patch);
+  const { page, tabId } = await openFlow(query);
+  const res = await startJob(tabId, makePrompts(n));
+  const job = await waitJob('done');
   await page.waitForTimeout(300);
-  await page.click('#sure'); // swallowed by teach mode, only records the label
-  const learned = await worker.evaluate(() =>
-    chrome.storage.local.get('settings').then(({ settings }) => settings.buttonPhrases));
-  const afterPick = await page.evaluate(() => window.sureClicks);
-  await page.evaluate(() => {
-    const card = document.createElement('div');
-    card.innerHTML = '<p>48 images done. Should I continue?</p><button id="sure2">Sure thing</button>';
-    card.querySelector('#sure2').onclick = () => { window.sureClicks++; card.remove(); };
-    document.body.appendChild(card);
-  });
-  await page.waitForFunction(() => window.sureClicks >= 1, null, { timeout: 8000 }).catch(() => {});
-  const after = await page.evaluate(() => window.sureClicks);
-  check('öğretme: bilinmeyen buton önceden tıklanmadı', before === 0 && afterPick === 0);
-  check('öğretme: etiket kaydedildi', learned.includes('Sure thing'), learned.slice(-2).join(', '));
-  check('öğretme: sonraki seferde otomatik tıklandı', after === 1, `tıklama=${after}`);
+  const st = await mock(page);
+  check(`${name}: görev başladı ve bitti`, res?.ok && job?.status === 'done', job?.note || job?.status);
+  check(`${name}: mesaj sırası doğru`, kinds(st.messages) === expectedKinds, kinds(st.messages));
+  checkImages(name, st, n);
   await page.close();
 }
 
-// Popup renders and reflects stats.
+// 45 prompts -> Flow stops after 20 and 40: two "Devam et", then the rename
+// step with two "Evet, devam et".
+await jobScenario('textarea + durdur butonu', 'composer=textarea', {}, 'GEN D D RENAME E E');
+await jobScenario('zengin editör + Enter, durdur butonu yok, sonda da soruyor',
+  'composer=ce&stop=0&askAtEnd=1', {}, 'GEN D D D RENAME E E');
+await jobScenario('tanınmayan soru cümlesi (tur sonu kuralı)', 'composer=textarea&odd=1', {}, 'GEN D D RENAME E E');
+await jobScenario('mesaj başına 20 prompt', 'composer=textarea', { promptsPerMessage: 20 }, 'GEN GEN GEN RENAME E E');
+
+// Without a job: answers "Devam edeyim mi?" on its own, but only when enabled.
 {
-  const page = await context.newPage();
-  await page.setViewportSize({ width: 360, height: 640 });
-  await page.goto(`chrome-extension://${extId}/src/popup.html`);
-  await page.waitForTimeout(300);
-  await page.screenshot({ path: path.join(tmpdir(), 'faa-popup.png'), fullPage: true });
-  const count = await page.textContent('#count');
-  check('popup açıldı', count !== null, `sayaç=${count}`);
+  await reset({ autoReply: true });
+  const { page } = await openFlow('composer=textarea');
+  const list = makePrompts(45).map((p, i) => `${i + 1}. ${p}`).join('\n\n');
+  await page.evaluate((t) => mockUserSays(t), list);
+  await page.waitForFunction(() => mockState.images.length === 45 && !mockState.busy, null, { timeout: 60000 }).catch(() => {});
+  await page.waitForTimeout(500);
+  const st = await mock(page);
+  check('görev yokken: soruları "Devam et" ile cevapladı', st.images.length === 45 && st.messages.length === 3 &&
+    st.messages.slice(1).every((m) => m === 'Devam et'), `görsel=${st.images.length}, mesaj=${st.messages.length}`);
+  check('görev yokken: uzaktaki "Stop" butonu meşgul sayılmadı/tıklanmadı', st.distractorClicks === 0);
+  await page.close();
+
+  await reset({ autoReply: false });
+  const { page: page2 } = await openFlow('composer=textarea');
+  await page2.evaluate((t) => mockUserSays(t), list);
+  await page2.waitForTimeout(5000);
+  const st2 = await mock(page2);
+  check('otomatik cevap kapalıyken: hiçbir şey yazmadı', st2.messages.length === 1 && st2.images.length === 20,
+    `mesaj=${st2.messages.length}`);
+  await page2.close();
+}
+
+// Side panel: paste prompts, start, pause, resume.
+{
+  await reset();
+  const { page, tabId } = await openFlow('composer=textarea');
+  const panel = await context.newPage();
+  await panel.setViewportSize({ width: 400, height: 900 });
+  await panel.goto(`chrome-extension://${extId}/src/panel.html?tabId=${tabId}`);
+  const text = makePrompts(45).map((p, i) => (i === 3 ? `${p}\nikinci satır` : p)).join('\n\n');
+  await panel.fill('#prompts', text);
+  const count = await panel.textContent('#promptCount');
+  check('panel: promptlar boş satırdan ayrıldı', count.startsWith('45 prompt'), count);
+  await panel.click('#start');
+
+  await page.waitForFunction(() => mockState.messages.length >= 2, null, { timeout: 30000 });
+  await panel.click('#pause');
+  await page.waitForFunction(() => mockState.images.length >= 40 && !mockState.busy, null, { timeout: 30000 });
+  await page.waitForTimeout(4000);
+  const paused = await mock(page);
+  check('panel: duraklatınca cevap yazmadı', paused.messages.length === 2, kinds(paused.messages));
+  check('panel: durum "Duraklatıldı"', (await panel.textContent('#statusChip')) === 'Duraklatıldı');
+
+  await panel.click('#resume');
+  const job = await waitJob('done');
+  await panel.waitForTimeout(1000);
+  const st = await mock(page);
+  check('panel: sürdürünce görev tamamlandı', job?.status === 'done', job?.note);
+  check('panel: mesaj sırası doğru', kinds(st.messages) === 'GEN D D RENAME E E', kinds(st.messages));
+  checkImages('panel', st, 45);
+  check('panel: durum "Tamamlandı"', (await panel.textContent('#statusChip')) === 'Tamamlandı');
+  await panel.screenshot({ path: path.join(tmpdir(), 'faa-panel.png'), fullPage: true });
+  await panel.close();
   await page.close();
 }
 

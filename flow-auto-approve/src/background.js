@@ -1,29 +1,37 @@
-// Keeps the toolbar badge in sync: approval count, OFF, or MAX when the
-// configured limit is reached.
+// Opens the side panel from the toolbar icon and keeps the badge in sync
+// with the job: step progress while running, II when paused, ✓ when done.
 
-importScripts('defaults.js');
+importScripts('shared.js');
+
+function enablePanelOnClick() {
+  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+}
 
 async function refreshBadge() {
-  const res = await chrome.storage.local.get(['settings', 'stats']);
-  const settings = faaMergeSettings(res.settings);
-  const count = res.stats?.count || 0;
+  const { job } = await chrome.storage.local.get('job');
   let text = '';
   let color = '#1a73e8';
-  if (!settings.enabled) {
-    text = 'OFF';
-    color = '#6b7280';
-  } else if (settings.maxApprovals > 0 && count >= settings.maxApprovals) {
-    text = 'MAX';
+  if (job?.status === 'running') {
+    text = `${Math.min(job.stepIndex + 1, job.steps.length)}/${job.steps.length}`;
+  } else if (job?.status === 'paused') {
+    text = 'II';
     color = '#b45309';
-  } else if (count) {
-    text = count > 999 ? '999+' : String(count);
+  } else if (job?.status === 'done') {
+    text = '✓';
+    color = '#188038';
   }
   await chrome.action.setBadgeText({ text });
   await chrome.action.setBadgeBackgroundColor({ color });
 }
 
-chrome.runtime.onInstalled.addListener(refreshBadge);
-chrome.runtime.onStartup.addListener(refreshBadge);
-chrome.storage.onChanged.addListener((_changes, area) => {
-  if (area === 'local') refreshBadge();
+chrome.runtime.onInstalled.addListener(() => {
+  enablePanelOnClick();
+  refreshBadge();
+});
+chrome.runtime.onStartup.addListener(() => {
+  enablePanelOnClick();
+  refreshBadge();
+});
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes.job) refreshBadge();
 });

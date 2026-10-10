@@ -1,0 +1,122 @@
+// Shared settings and helpers. Loaded as a classic script by the content
+// script, the side panel and the service worker, so it only defines globals.
+
+const FAA_DEFAULTS = {
+  // Answer Flow's "continue?" questions even when no prompt job is running.
+  autoReply: true,
+  replyText: 'Devam et',
+  renameReplyText: 'Evet, devam et',
+  // How many images Flow makes before it stops and asks again.
+  batchSize: 20,
+  // 0 = send every prompt in one message; otherwise split into messages of this size.
+  promptsPerMessage: 0,
+  renameAfter: true,
+  namePrefix: 'gorsel',
+  // Placeholders: {adet} prompts in this message, {parti} batch size,
+  // {baslangic}/{bitis} first/last prompt number, {toplam} all prompts,
+  // {onek} name prefix, {promptlar} the numbered prompt list.
+  generateTemplate:
+    'Aşağıda numaralı {adet} prompt var. Her prompt için 1 görsel oluştur ve numara sırasını bozma. ' +
+    'Görselleri {parti} adetlik partiler halinde oluştur.\n\n{promptlar}',
+  renameTemplate:
+    'Şimdi oluşturduğun {toplam} görseli prompt numarasına göre yeniden adlandır: ' +
+    '1. prompttan oluşan görselin adı {onek}1, 2. prompttan oluşanın adı {onek}2 olsun ' +
+    've bu şekilde son görsel {onek}{toplam} olana kadar devam et. Her seferde {parti} görsel adlandır.',
+  // Text in the agent's latest message that means it is waiting for a "yes".
+  // Substring match, case- and diacritic-insensitive.
+  triggerPhrases: [
+    'devam edeyim mi', 'devam edelim mi', 'devam etmemi', 'devam etmek ister', 'devam etmek istiyor',
+    'devam etmeli miyim', 'devam edilsin mi', 'devam?',
+    'isimlendireyim mi', 'isimlendirmeye devam', 'adlandırayım mı', 'adlandırmaya devam',
+    'onaylıyor musun', 'onay ver', 'onayınız', 'onayın', 'onay gerek',
+    'should i continue', 'shall i continue', 'would you like me to continue',
+    'do you want me to continue', 'want to continue', 'like to continue', 'continue?',
+    'keep going?', 'proceed?', 'should i rename', 'continue renaming', 'continue naming',
+    'your approval', 'approval needed', 'approval required',
+  ],
+  // Wait this long after the agent's question stops changing before answering.
+  questionIdleMs: 3000,
+  // With no question visible, the agent's turn counts as finished after the
+  // page has been completely still for this long.
+  turnEndIdleMs: 30000,
+  // Safety stop: pause a step after this many replies beyond the expected count.
+  maxExtraReplies: 5,
+  sendPhrases: ['send', 'gönder', 'submit', 'arrow_upward', 'arrow_forward', 'send_message'],
+  stopPhrases: ['stop', 'durdur', 'stop_circle', 'stop generating', 'yanıtı durdur'],
+  inputSelector: '',
+  sendSelector: '',
+  debug: false,
+};
+
+function faaMergeSettings(stored) {
+  return Object.assign({}, FAA_DEFAULTS, stored || {});
+}
+
+function faaNormalize(text) {
+  return String(text || '')
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/ı/g, 'i')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function faaEscapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Whole-word matcher for an already-normalized haystack: "stop" matches
+// "Stop" and "stop_circle" but not "stopwatch". Null for an empty phrase.
+function faaWordRegExp(phrase) {
+  const p = faaNormalize(phrase);
+  if (!p) return null;
+  return new RegExp(`(?<![\\p{L}\\p{N}])${faaEscapeRegExp(p)}(?![\\p{L}\\p{N}])`, 'u');
+}
+
+// Prompts are separated by blank lines; line breaks inside a prompt are kept
+// as spaces.
+function faaParsePrompts(text) {
+  return String(text || '')
+    .split(/\n[ \t]*\n/)
+    .map((p) => p.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+}
+
+function faaFill(template, vars) {
+  return String(template).replace(/\{(\w+)\}/g, (m, key) => (key in vars ? String(vars[key]) : m));
+}
+
+// Turns the prompt list into the chat messages the job sends, one per step.
+// `expected` is how many times Flow should ask "continue?" during the step.
+function faaBuildSteps(prompts, s) {
+  const batch = Math.max(1, Number(s.batchSize) || 1);
+  const per = s.promptsPerMessage > 0 ? s.promptsPerMessage : prompts.length;
+  const total = prompts.length;
+  const steps = [];
+  for (let i = 0; i < total; i += per) {
+    const chunk = prompts.slice(i, i + per);
+    const start = i + 1;
+    const end = i + chunk.length;
+    steps.push({
+      kind: 'generate',
+      label: chunk.length === total ? `Üretim: ${total} prompt` : `Üretim: prompt ${start}–${end}`,
+      text: faaFill(s.generateTemplate, {
+        adet: chunk.length, parti: batch, baslangic: start, bitis: end, toplam: total, onek: s.namePrefix,
+        promptlar: chunk.map((p, j) => `${start + j}. ${p}`).join('\n\n'),
+      }),
+      expected: Math.ceil(chunk.length / batch) - 1,
+    });
+  }
+  if (s.renameAfter && total) {
+    steps.push({
+      kind: 'rename',
+      label: `İsimlendirme: ${s.namePrefix}1–${s.namePrefix}${total}`,
+      text: faaFill(s.renameTemplate, {
+        adet: total, parti: batch, baslangic: 1, bitis: total, toplam: total, onek: s.namePrefix, promptlar: '',
+      }),
+      expected: Math.ceil(total / batch) - 1,
+    });
+  }
+  return steps;
+}

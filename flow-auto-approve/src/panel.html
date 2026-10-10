@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Flow Oto-Onay</title>
+  <link rel="stylesheet" href="panel.css">
+</head>
+<body>
+  <header>
+    <div class="title">
+      <img src="../icons/icon32.png" alt="" width="20" height="20">
+      <h1>Flow Oto-Onay</h1>
+    </div>
+    <span id="statusChip" class="chip">Hazır</span>
+  </header>
+
+  <section>
+    <label class="field" for="prompts">
+      <span class="label">Promptlar</span>
+      <small>Her promptun arasına bir boş satır bırakın.</small>
+    </label>
+    <textarea id="prompts" rows="12" spellcheck="false"
+      placeholder="Sisli bir ormanda yürüyen kırmızı tilki&#10;&#10;Gün batımında İstanbul silüeti, yağlı boya&#10;&#10;…"></textarea>
+    <div class="row between">
+      <span id="promptCount" class="muted">0 prompt</span>
+      <span>
+        <button id="loadFile" class="link" type="button">📄 .txt dosyasından yükle</button>
+        <input id="file" type="file" accept=".txt,text/plain" hidden>
+      </span>
+    </div>
+  </section>
+
+  <section>
+    <div class="row">
+      <label class="field">Parti büyüklüğü
+        <input type="number" id="batchSize" min="1" step="1">
+      </label>
+      <label class="field">İsim öneki
+        <input type="text" id="namePrefix">
+      </label>
+    </div>
+    <label class="check"><input type="checkbox" id="renameAfter">
+      <span>Bitince sırayla isimlendirt (<span id="nameExample">gorsel1, gorsel2…</span>)</span></label>
+  </section>
+
+  <section>
+    <div class="buttons">
+      <button id="start" class="primary" type="button">▶ Başlat</button>
+      <button id="pause" type="button">⏸ Duraklat</button>
+      <button id="resume" type="button">⏵ Sürdür</button>
+      <button id="next" type="button" title="Mevcut adımı bitmiş say ve sıradaki mesajı gönder">⏭ Sonraki adım</button>
+      <button id="stop" type="button">■ Durdur</button>
+      <button id="clear" class="link" type="button">Temizle</button>
+    </div>
+    <p id="error" class="note" hidden></p>
+  </section>
+
+  <section id="progress" hidden>
+    <div class="row between">
+      <strong id="stepLabel"></strong>
+      <span id="stepCount" class="muted"></span>
+    </div>
+    <div class="bar"><div id="barFill"></div></div>
+    <p id="replies" class="muted"></p>
+    <p id="live" class="muted"></p>
+    <p id="jobNote" class="note" hidden></p>
+    <ol id="log" class="log" reversed></ol>
+  </section>
+
+  <section>
+    <label class="check"><input type="checkbox" id="autoReply">
+      <span>Görev yokken de Flow sorduğunda otomatik "<span id="replyEcho">Devam et</span>" yaz</span></label>
+    <p id="standaloneCount" class="muted"></p>
+  </section>
+
+  <details>
+    <summary>Gelişmiş ayarlar</summary>
+    <div class="row">
+      <label class="field">Onay cevabı
+        <input type="text" id="replyText">
+      </label>
+      <label class="field">İsimlendirme cevabı
+        <input type="text" id="renameReplyText">
+      </label>
+    </div>
+    <div class="row">
+      <label class="field">Mesaj başına prompt <small>(0 = hepsi tek mesajda)</small>
+        <input type="number" id="promptsPerMessage" min="0" step="1">
+      </label>
+      <label class="field">Fazladan onay sınırı
+        <input type="number" id="maxExtraReplies" min="0" step="1">
+      </label>
+    </div>
+    <div class="row">
+      <label class="field">Soru bekleme (ms)
+        <input type="number" id="questionIdleMs" min="0" step="500">
+      </label>
+      <label class="field">Tur bitti sayma (ms)
+        <input type="number" id="turnEndIdleMs" min="1000" step="1000">
+      </label>
+    </div>
+    <p class="muted">"Tur bitti sayma": Flow soru sormadan durursa sayfa bu kadar süre tamamen sakin kaldığında adım bitmiş sayılır.</p>
+    <label class="field">Üretim mesajı şablonu
+      <textarea id="generateTemplate" rows="4"></textarea>
+    </label>
+    <label class="field">İsimlendirme mesajı şablonu
+      <textarea id="renameTemplate" rows="4"></textarea>
+    </label>
+    <p class="muted">Yer tutucular: {adet} {parti} {baslangic} {bitis} {toplam} {onek} {promptlar}</p>
+    <label class="field">Tetik ifadeleri <small>(Flow'un sorusunda geçen metin, her satıra bir tane)</small>
+      <textarea id="triggerPhrases" rows="5"></textarea>
+    </label>
+    <div class="row">
+      <label class="field">Gönder butonu metinleri
+        <textarea id="sendPhrases" rows="3"></textarea>
+      </label>
+      <label class="field">Durdur butonu metinleri
+        <textarea id="stopPhrases" rows="3"></textarea>
+      </label>
+    </div>
+    <label class="field">Sohbet kutusu CSS seçici <small>(isteğe bağlı)</small>
+      <input type="text" id="inputSelector" placeholder="ör. textarea[placeholder*=Flow]">
+    </label>
+    <label class="field">Gönder butonu CSS seçici <small>(isteğe bağlı)</small>
+      <input type="text" id="sendSelector" placeholder="ör. button[aria-label=Send]">
+    </label>
+    <label class="check"><input type="checkbox" id="debug"> <span>Konsola ayrıntılı kayıt yaz</span></label>
+    <details class="preview">
+      <summary>Gönderilecek mesajları önizle</summary>
+      <div id="preview"></div>
+    </details>
+    <button id="restore" class="link" type="button">Varsayılanlara dön</button>
+  </details>
+
+  <footer id="saved" class="muted">Ayarlar otomatik kaydedilir.</footer>
+
+  <script src="shared.js"></script>
+  <script src="panel.js"></script>
+</body>
+</html>

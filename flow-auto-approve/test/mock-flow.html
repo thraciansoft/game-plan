@@ -6,24 +6,23 @@
 <style>
   body { font-family: sans-serif; margin: 0; display: flex; height: 100vh; }
   main { flex: 1; overflow: auto; padding: 12px; }
-  #grid { display: grid; grid-template-columns: repeat(12, 40px); gap: 4px; }
-  #grid div { width: 40px; height: 40px; background: #9cf; }
-  aside { width: 360px; display: flex; flex-direction: column; border-left: 1px solid #ccc; }
+  #grid { display: grid; grid-template-columns: repeat(8, 70px); gap: 4px; }
+  #grid figure { margin: 0; width: 70px; height: 50px; background: #9cf; font-size: 10px; }
+  aside { width: 380px; display: flex; flex-direction: column; border-left: 1px solid #ccc; }
   #log { flex: 1; overflow: auto; padding: 8px; }
-  .msg { margin: 6px 0; padding: 6px 8px; border-radius: 8px; background: #eee; }
-  .msg.user { background: #def; text-align: right; }
+  .msg { margin: 6px 0; padding: 6px 8px; border-radius: 8px; background: #eee; white-space: pre-wrap; max-height: 120px; overflow: hidden; }
+  .msg.user { background: #def; }
   .composer { display: flex; gap: 6px; padding: 8px; border-top: 1px solid #ccc; }
-  .composer textarea, .composer [contenteditable] { flex: 1; min-height: 30px; border: 1px solid #999; }
+  .composer textarea, .composer [contenteditable] { flex: 1; min-height: 30px; max-height: 80px; overflow: auto; border: 1px solid #999; }
   .icon { font-family: monospace; font-size: 10px; }
-  [role="dialog"] { position: fixed; inset: 30% 30% auto; background: #fff; border: 1px solid #333; padding: 16px; }
 </style>
 </head>
 <body>
 <main>
   <header>
-    <!-- Distractor: a "Continue" button with no approval question around it. -->
-    <button id="distractor"><span class="icon">edit</span>Continue editing</button>
-    <span>Toplam: <b id="total">0</b></span>
+    <!-- Distractor: a "Stop" button far away from the chat box. -->
+    <button id="distractor"><span class="icon">stop</span>Stop preview</button>
+    <span>Görsel: <b id="total">0</b> · <span id="progress"></span></span>
   </header>
   <div id="grid"></div>
 </main>
@@ -32,20 +31,27 @@
   <div class="composer" id="composer"></div>
 </aside>
 <script>
+  // A stand-in for Flow's agent: it makes images in batches of BATCH, stops
+  // after each batch to ask "Devam edeyim mi?", and renames images the same way.
   const params = new URLSearchParams(location.search);
-  const UI = params.get('ui') || 'button';
-  const BATCH = 24;
-  const TARGET = Number(params.get('target') || 72);
-  const state = { total: 0, distractorClicks: 0, userMessages: [], questions: 0, running: false };
+  const COMPOSER = params.get('composer') || 'textarea';
+  const STOP_BUTTON = params.get('stop') !== '0';
+  const ASK_AT_END = params.get('askAtEnd') === '1';
+  const ODD = params.get('odd') === '1'; // questions the extension's phrase list does not know
+  const BATCH = Number(params.get('batch') || 20);
+  const STEP_MS = Number(params.get('stepMs') || 30);
+
+  const state = { queue: [], images: [], messages: [], phase: 'idle', busy: false, renamePrefix: '' };
   window.mockState = state;
 
   const log = document.getElementById('log');
   const grid = document.getElementById('grid');
+  const progress = document.getElementById('progress');
   const composer = document.getElementById('composer');
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  let refreshComposer = () => {};
 
-  document.getElementById('distractor').addEventListener('click', () => { state.distractorClicks++; });
-
-  function addMessage(text, who = 'agent') {
+  function bubble(text, who) {
     const div = document.createElement('div');
     div.className = `msg ${who}`;
     div.textContent = text;
@@ -53,81 +59,109 @@
     return div;
   }
 
-  function generateBatch() {
-    state.running = true;
-    let made = 0;
-    const timer = setInterval(() => {
-      const img = document.createElement('div');
-      grid.appendChild(img);
-      state.total++;
-      made++;
-      document.getElementById('total').textContent = state.total;
-      if (made === BATCH || state.total >= TARGET) {
-        clearInterval(timer);
-        state.running = false;
-        if (state.total < TARGET) askToContinue();
-        else addMessage('Tamamlandı.');
-      }
-    }, 100); // a batch (2.4s) outlasts the extension's cooldown, like real generations
+  function setBusy(v) {
+    state.busy = v;
+    refreshComposer();
   }
 
-  function askToContinue() {
-    state.questions++;
-    if (UI === 'button') {
-      const div = addMessage(`${state.total} görsel oluşturdum. Devam etmemi ister misiniz? `);
-      const row = document.createElement('div');
-      const yes = document.createElement('button');
-      yes.innerHTML = '<span class="icon">check</span>Devam et';
-      const no = document.createElement('button');
-      no.textContent = 'Durdur';
-      yes.onclick = () => { row.remove(); addMessage('Devam et', 'user'); generateBatch(); };
-      no.onclick = () => { row.remove(); addMessage('Durduruldu', 'user'); };
-      row.append(yes, no);
-      div.appendChild(row);
-    } else if (UI === 'dialog') {
-      const dlg = document.createElement('div');
-      dlg.setAttribute('role', 'dialog');
-      dlg.innerHTML = `<p>You've generated ${state.total} images. Do you want to continue?</p>
-        <button data-a="cancel">Cancel</button>
-        <div role="button" tabindex="0" data-a="ok"><span class="icon">arrow_forward</span>Continue</div>`;
-      dlg.addEventListener('click', (e) => {
-        const a = e.target.closest('[data-a]')?.dataset.a;
-        if (!a) return;
-        dlg.remove();
-        if (a === 'ok') generateBatch();
-      });
-      document.body.appendChild(dlg);
+  async function agentSay(text) {
+    setBusy(true);
+    const div = bubble('', 'agent');
+    const words = text.split(' ');
+    for (let i = 0; i < words.length; i++) {
+      div.textContent += (i ? ' ' : '') + words[i]; // streams like a real chat
+      await sleep(20);
+    }
+    setBusy(false);
+  }
+
+  async function runGeneration() {
+    setBusy(true);
+    let made = 0;
+    while (state.queue.length && made < BATCH) {
+      const p = state.queue.shift();
+      const fig = document.createElement('figure');
+      fig.textContent = `#${p.n}`;
+      grid.appendChild(fig);
+      state.images.push({ n: p.n, prompt: p.text, name: '', el: fig });
+      made++;
+      progress.textContent = `${made}/${BATCH}`;
+      document.getElementById('total').textContent = state.images.length;
+      await sleep(STEP_MS);
+    }
+    progress.textContent = '';
+    if (state.queue.length) {
+      state.phase = 'gen';
+      await agentSay(ODD
+        ? `${state.images.length} görsel hazır. Sıradaki partiye geçelim mi?`
+        : `${state.images.length} görsel oluşturuldu. Devam edeyim mi?`);
     } else {
-      // Chat-only: the agent streams its question and waits for a typed reply.
-      const div = addMessage('');
-      const words = `${state.total} görsel hazır. Devam edeyim mi?`.split(' ');
-      let i = 0;
-      const t = setInterval(() => {
-        div.textContent += (i ? ' ' : '') + words[i++];
-        if (i === words.length) clearInterval(t);
-      }, 40);
+      state.phase = ASK_AT_END ? 'gen' : 'idle';
+      await agentSay(`Tüm ${state.images.length} görsel oluşturuldu.${ASK_AT_END ? ' Devam edeyim mi?' : ''}`);
     }
   }
 
-  function onUserMessage(text) {
-    if (!text.trim()) return;
-    state.userMessages.push(text);
-    addMessage(text, 'user');
-    if (/evet|devam|yes|continue/i.test(text) && !state.running && state.total < TARGET) generateBatch();
+  async function runRename() {
+    setBusy(true);
+    let done = 0;
+    const todo = state.images.filter((im) => !im.name).sort((a, b) => a.n - b.n);
+    for (const im of todo.slice(0, BATCH)) {
+      im.name = `${state.renamePrefix}${im.n}`;
+      im.el.textContent = im.name;
+      done++;
+      progress.textContent = `ad ${done}/${BATCH}`;
+      await sleep(STEP_MS);
+    }
+    progress.textContent = '';
+    const left = state.images.filter((im) => !im.name).length;
+    state.phase = left ? 'rename' : 'idle';
+    await agentSay(left
+      ? (ODD ? `${state.images.length - left} görsele ad verildi. Sonrakilere geçelim mi?`
+        : `${state.images.length - left} görsel isimlendirildi. Kalanları isimlendireyim mi?`)
+      : 'Tüm görseller isimlendirildi.');
   }
 
-  if (UI === 'chat-textarea') {
-    // Emulates React's controlled input: a value tracker on the instance means
-    // plain `el.value = x` from page scripts is ignored by onChange.
+  async function onUserMessage(text) {
+    if (!text.trim()) return;
+    state.messages.push(text);
+    bubble(text, 'user');
+    await sleep(100);
+    const prompts = [...text.matchAll(/^\s*(\d+)[.)]\s+(.+)$/gm)].map((m) => ({ n: Number(m[1]), text: m[2].trim() }));
+    if (prompts.length) {
+      state.queue.push(...prompts);
+      await agentSay(`Tamam, ${prompts.length} görsel oluşturuyorum.`);
+      return runGeneration();
+    }
+    if (/adland|isimlendir/i.test(text)) {
+      state.renamePrefix = (text.match(/adı\s+(\S+?)1\b/) || [])[1] || 'img';
+      await agentSay('Tamam, görselleri yeniden adlandırıyorum.');
+      return runRename();
+    }
+    if (/devam|evet|continue|yes/i.test(text)) {
+      if (state.phase === 'gen' && state.queue.length) return runGeneration();
+      if (state.phase === 'rename') return runRename();
+      state.phase = 'idle';
+      return agentSay('Yapılacak başka bir şey kalmadı.');
+    }
+    return agentSay('Anlamadım.');
+  }
+  window.mockUserSays = onUserMessage;
+
+  const stop = document.createElement('button');
+  stop.setAttribute('aria-label', 'Stop');
+  stop.innerHTML = '<span class="icon">stop_circle</span>';
+
+  if (COMPOSER === 'textarea') {
+    // Emulates a React controlled input: assigning `value` from page code is
+    // tracked, so only real (or prototype-setter) edits reach the app state.
     const ta = document.createElement('textarea');
-    ta.placeholder = 'Mesaj yazın';
+    ta.placeholder = 'Flow\'a bir şey sorun';
     const send = document.createElement('button');
     send.setAttribute('aria-label', 'Send message');
     send.innerHTML = '<span class="icon">arrow_upward</span>';
-    send.disabled = true;
     const desc = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
     let tracked = '';
-    let reactValue = '';
+    let appValue = '';
     Object.defineProperty(ta, 'value', {
       configurable: true,
       get() { return desc.get.call(this); },
@@ -137,36 +171,53 @@
       const actual = desc.get.call(ta);
       if (actual === tracked) return; // React would bail out here
       tracked = actual;
-      reactValue = actual;
-      send.disabled = !reactValue.trim() || state.running;
+      appValue = actual;
+      refreshComposer();
     });
     send.addEventListener('click', () => {
-      onUserMessage(reactValue);
-      reactValue = '';
+      if (send.disabled) return;
+      const text = appValue;
+      appValue = '';
       ta.value = '';
-      send.disabled = true;
+      refreshComposer();
+      onUserMessage(text);
     });
-    composer.append(ta, send);
-  } else if (UI === 'chat-ce') {
+    refreshComposer = () => {
+      send.disabled = state.busy || !appValue.trim();
+      send.style.display = STOP_BUTTON && state.busy ? 'none' : '';
+      stop.style.display = STOP_BUTTON && state.busy ? '' : 'none';
+    };
+    composer.append(ta, send, stop);
+  } else {
+    // A rich-text editor: handles paste itself, one <p> per line, Enter sends.
     const ce = document.createElement('div');
     ce.contentEditable = 'true';
     ce.setAttribute('role', 'textbox');
-    ce.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        onUserMessage(ce.textContent);
-        ce.textContent = '';
+    ce.addEventListener('paste', (e) => {
+      e.preventDefault();
+      const text = e.clipboardData.getData('text/plain');
+      ce.textContent = '';
+      for (const line of text.split('\n')) {
+        const p = document.createElement('p');
+        p.textContent = line;
+        ce.appendChild(p);
       }
     });
-    composer.append(ce);
-  } else {
-    const ta = document.createElement('textarea');
-    composer.append(ta);
+    ce.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' || e.shiftKey) return;
+      e.preventDefault();
+      if (state.busy) return;
+      const text = Array.from(ce.querySelectorAll('p')).map((p) => p.textContent).join('\n') || ce.textContent;
+      ce.textContent = '';
+      onUserMessage(text);
+    });
+    refreshComposer = () => { stop.style.display = STOP_BUTTON && state.busy ? '' : 'none'; };
+    composer.append(ce, stop);
   }
+  refreshComposer();
 
-  addMessage('Bir kedinin 72 farklı görselini oluştur', 'user');
-  // Start after the extension's startup grace period, like a real batch would.
-  setTimeout(generateBatch, Number(params.get('startDelay') || 3500));
+  document.getElementById('distractor').addEventListener('click', () => { state.distractorClicks = (state.distractorClicks || 0) + 1; });
+  bubble('Merhaba! Ne oluşturmak istersiniz?', 'agent');
 </script>
 </body>
 </html>

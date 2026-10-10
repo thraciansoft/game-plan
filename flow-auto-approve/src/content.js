@@ -1,45 +1,51 @@
 // Flow Oto-Onay content script.
 //
-// Watches the Google Flow page for the "should I continue?" checkpoint that
-// appears after every batch of generations and answers it automatically,
-// either by clicking the approve button or by typing a reply into the chat.
+// Runs a prompt job inside Google Flow's chat: sends the numbered prompt list,
+// answers every "continue?" Flow asks after each batch with "Devam et", then
+// asks Flow to rename the images in prompt order and answers its "rename the
+// rest?" questions the same way. Without a job it can still answer the
+// "continue?" questions on its own.
 
 (() => {
   if (window.__faaLoaded) return;
   window.__faaLoaded = true;
 
   const TAG = '[Flow Oto-Onay]';
-  const CLICKABLE = [
-    'button', '[role="button"]', 'input[type="button"]', 'input[type="submit"]',
-    '[role="menuitem"]', '[role="option"]',
-  ].join(',');
+  const CLICKABLE = 'button, [role="button"], input[type="button"], input[type="submit"]';
   const INPUTS = [
     'textarea', '[contenteditable="true"]', '[contenteditable=""]',
     '[contenteditable="plaintext-only"]', '[role="textbox"]', 'input[type="text"]', 'input:not([type])',
   ].join(',');
   const EDITABLE = 'textarea, input, [contenteditable="true"], [contenteditable=""], [contenteditable="plaintext-only"]';
   const STARTUP_GRACE_MS = 3000; // ignore chat history rendered while the page loads
-  const TRIGGER_TTL_MS = 60000;
-  const MAX_MESSAGE_CHARS = 1500; // bigger additions are re-rendered history, not a new message
-  const MIN_SCAN_GAP_MS = 500;
-  const NEAR_PX = 250; // max on-screen distance between the question and its button
+  const MAX_CHUNK_CHARS = 3000; // bigger additions are re-rendered history, not new text
+  const MIN_WAIT_AFTER_SEND_MS = 1500;
+  const STANDALONE_COOLDOWN_MS = 6000;
+  const QUESTION_TTL_MS = 60000;
+  const RETRY_DELAY_MS = 5000;
+  const NEAR_PX = 250; // max on-screen distance between the chat box and its buttons
+  const TICK_MS = 500;
 
-  let settings = faaMergeSettings();
-  let stats = Object.assign({}, FAA_STATS_DEFAULTS);
-  let compiled = compile(settings);
-  let acting = false;
-  let picking = false;
-  let lastActionAt = 0;
-  let lastScanAt = 0;
-  let scanTimer = null;
-  let pendingTrigger = null; // { text, node, at } from a newly rendered chat message
-  let lastNote = '';
-  let limitAnnounced = false;
+  const instanceId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const startedAt = Date.now();
-  const clicked = new Set(); // buttons already clicked while they stay on screen
-
+  let settings = faaMergeSettings();
+  let compiled = compile(settings);
+  let job = null; // the job this tab runs; null when this tab owns none
+  let sending = false;
+  let retryAt = 0;
+  let lastNote = '';
   let observer = null;
-  let intervalId = null;
+  let tickId = null;
+
+  // Page activity since the last message we sent.
+  const mon = {
+    lastAny: Date.now(), // any DOM change (progress counters, new images, text)
+    lastText: 0, // new text with letters in it
+    lastNode: null,
+    transcript: '',
+    markAt: Date.now(),
+    echo: '', // the message we just sent, so its chat bubble is not read as the agent's
+  };
 
   const log = (...args) => settings.debug && console.log(TAG, ...args);
 
@@ -53,70 +59,31 @@
 
   function shutdown() {
     observer?.disconnect();
-    clearInterval(intervalId);
+    clearInterval(tickId);
   }
 
   function compile(s) {
     const words = (list) => (list || []).map(faaWordRegExp).filter(Boolean);
     return {
-      button: words(s.buttonPhrases),
-      exclude: words(s.excludePhrases),
       send: words(s.sendPhrases),
+      stop: words(s.stopPhrases),
       trigger: (s.triggerPhrases || []).map(faaNormalize).filter(Boolean),
-      reply: faaNormalize(s.replyText),
     };
   }
 
-  // ---------------------------------------------------------------- storage
+  const hasTrigger = (normalized) => compiled.trigger.some((p) => normalized.includes(p));
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  chrome.storage.local.get(['settings', 'stats'], (res) => {
-    settings = faaMergeSettings(res.settings);
-    stats = Object.assign({}, FAA_STATS_DEFAULTS, res.stats);
-    compiled = compile(settings);
-    start();
-  });
-
-  chrome.storage.onChanged.addListener((changes, area) => {
-    if (area !== 'local') return;
-    if (changes.settings) {
-      settings = faaMergeSettings(changes.settings.newValue);
-      compiled = compile(settings);
+  async function waitUntil(fn, timeoutMs, stepMs = 200) {
+    const end = Date.now() + timeoutMs;
+    for (;;) {
+      const v = fn();
+      if (v || Date.now() >= end) return v;
+      await sleep(stepMs);
     }
-    if (changes.stats) {
-      stats = Object.assign({}, FAA_STATS_DEFAULTS, changes.stats.newValue);
-      if (stats.count === 0) limitAnnounced = false;
-    }
-    scheduleScan();
-  });
-
-  async function updateStats(patch) {
-    if (!alive()) return;
-    const res = await chrome.storage.local.get('stats');
-    stats = Object.assign({}, FAA_STATS_DEFAULTS, res.stats, patch(res.stats || FAA_STATS_DEFAULTS));
-    await chrome.storage.local.set({ stats });
   }
 
-  function note(text) {
-    if (text === lastNote) return;
-    lastNote = text;
-    log(text);
-    updateStats(() => ({ lastNote: text })).catch(() => {});
-  }
-
-  async function record(action) {
-    lastActionAt = Date.now();
-    await updateStats((s) => ({
-      count: (s.count || 0) + 1,
-      lastAction: action,
-      lastActionAt,
-      lastNote: '',
-    }));
-    lastNote = '';
-    toast(`✓ ${action} (#${stats.count})`);
-    log(action);
-  }
-
-  // ------------------------------------------------------------- DOM helpers
+  // ---------------------------------------------------------- DOM helpers
 
   function ownUi(node) {
     const el = node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
@@ -143,17 +110,19 @@
   }
 
   // Text of a subtree with separate text nodes joined by spaces, so an icon
-  // ligature like "arrow_forward" does not glue onto the word next to it.
-  function textOf(node, limit = 4000) {
+  // ligature like "arrow_upward" does not glue onto the word next to it.
+  function textOf(node, limit = 4000, skipEditable = false) {
     if (!node) return '';
     if (node.nodeType === Node.TEXT_NODE) return node.data;
-    if (node.nodeType !== Node.ELEMENT_NODE && node.nodeType !== Node.DOCUMENT_FRAGMENT_NODE) return '';
+    if (node.nodeType !== Node.ELEMENT_NODE) return '';
     const out = [];
     let len = 0;
     const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
     for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-      const tag = n.parentElement?.tagName;
+      const parent = n.parentElement;
+      const tag = parent?.tagName;
       if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT') continue;
+      if (skipEditable && parent?.closest(EDITABLE)) continue;
       const t = n.data.trim();
       if (!t) continue;
       out.push(t);
@@ -164,16 +133,11 @@
   }
 
   function labelOf(el) {
-    const bits = [
-      el.getAttribute('aria-label'),
-      el.getAttribute('title'),
-      el.tagName === 'INPUT' ? el.value : '',
-      textOf(el, 200),
-    ];
+    const bits = [el.getAttribute('aria-label'), el.getAttribute('title'), textOf(el, 200)];
     return bits.filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
   }
 
-  function short(text, n = 40) {
+  function short(text, n = 60) {
     const t = String(text || '').replace(/\s+/g, ' ').trim();
     return t.length > n ? `${t.slice(0, n - 1)}…` : t;
   }
@@ -189,8 +153,11 @@
     return !el.disabled && el.getAttribute('aria-disabled') !== 'true';
   }
 
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  const jitter = (ms) => Math.max(0, Math.round(ms * (0.85 + Math.random() * 0.3)));
+  function gap(a, b) {
+    const dx = Math.max(0, a.left - b.right, b.left - a.right);
+    const dy = Math.max(0, a.top - b.bottom, b.top - a.bottom);
+    return Math.hypot(dx, dy);
+  }
 
   function clickEl(el) {
     const r = el.getBoundingClientRect();
@@ -209,97 +176,7 @@
     el.click();
   }
 
-  // ------------------------------------------------------- approve button
-
-  function matchesButton(el) {
-    const label = faaNormalize(labelOf(el));
-    if (!label || label.length > 80) return false;
-    if (compiled.exclude.some((re) => re.test(label))) return false;
-    return compiled.button.some((re) => re.test(label));
-  }
-
-  function hasTrigger(normalizedText) {
-    return compiled.trigger.some((p) => normalizedText.includes(p));
-  }
-
-  function gap(a, b) {
-    const dx = Math.max(0, a.left - b.right, b.left - a.right);
-    const dy = Math.max(0, a.top - b.bottom, b.top - a.bottom);
-    return Math.hypot(dx, dy);
-  }
-
-  // Looks for a trigger phrase in the containers around the button (dialog,
-  // chat bubble, card), ignoring the button's own label. The element holding
-  // the phrase must also sit next to the button on screen, so an unrelated
-  // "Continue" elsewhere on the page is not clicked.
-  function triggerNear(el) {
-    const own = faaNormalize(textOf(el, 200));
-    const textAround = (node) => {
-      const text = faaNormalize(textOf(node, 3000));
-      return own && node.contains(el) ? text.replace(own, ' ') : text;
-    };
-    // Deepest elements whose text contains a trigger phrase.
-    const holders = (node, out) => {
-      const kids = Array.from(node.children).filter((c) => c !== el && hasTrigger(textAround(c)));
-      if (!kids.length) out.push(node);
-      kids.forEach((c) => holders(c, out));
-      return out;
-    };
-    const btnRect = el.getBoundingClientRect();
-    let node = el.parentElement;
-    for (let depth = 0; node && depth < 8; depth++, node = node.parentElement) {
-      if (textOf(node, 3000).length > 3000) break; // reached a page-sized container
-      if (!hasTrigger(textAround(node))) continue;
-      const near = holders(node, []).some((h) => {
-        const r = h.getBoundingClientRect();
-        return r.width > 0 && r.height > 0 && gap(r, btnRect) <= NEAR_PX;
-      });
-      if (near) return true;
-    }
-    return false;
-  }
-
-  function contextOf(el) {
-    const own = faaNormalize(textOf(el, 200));
-    let node = el.parentElement;
-    for (let depth = 0; node && depth < 8; depth++, node = node.parentElement) {
-      const text = faaNormalize(textOf(node, 400)).replace(own, ' ').trim();
-      if (text.length > 15) return short(text, 160);
-    }
-    return '';
-  }
-
-  function pruneClicked() {
-    for (const el of clicked) {
-      if (!isVisible(el)) clicked.delete(el);
-    }
-  }
-
-  function findApproveButton() {
-    pruneClicked();
-    const usable = (el) => !clicked.has(el) && !ownUi(el) && isVisible(el) && isEnabled(el);
-
-    if (settings.approveSelector) {
-      const el = deepQueryAll(settings.approveSelector).find(usable);
-      if (el) return el; // an explicit selector is trusted, no trigger needed
-    }
-
-    let rejected = null;
-    for (const el of deepQueryAll(CLICKABLE)) {
-      if (!matchesButton(el) || !usable(el)) continue;
-      if (settings.requireTrigger && !triggerNear(el)) {
-        rejected = rejected || el;
-        continue;
-      }
-      return el;
-    }
-    if (rejected) {
-      note(`Aday buton görüldü ("${short(labelOf(rejected))}") ama yakınında tetik ifadesi yok; tıklanmadı.`);
-    }
-    return null;
-  }
-
-  // ---------------------------------------------------------- chat reply
+  // ------------------------------------------------------------- chat box
 
   function ancestors(node) {
     const list = [];
@@ -311,12 +188,11 @@
   function closeness(a, b) {
     if (!a || !b) return 0;
     const set = new Set(ancestors(a));
-    const chain = ancestors(b);
-    const lca = chain.find((n) => set.has(n));
+    const lca = ancestors(b).find((n) => set.has(n));
     return lca ? ancestors(lca).length : 0;
   }
 
-  function findChatInput(near) {
+  function findChatInput() {
     if (settings.inputSelector) {
       return deepQueryAll(settings.inputSelector).find(isVisible) || null;
     }
@@ -326,36 +202,55 @@
       !['search', 'password', 'email'].includes(el.type));
     if (!cands.length) return null;
     if (cands.includes(document.activeElement)) return document.activeElement;
-    // Prefer the input closest to the message that asked for approval, then
-    // the one lowest on screen (chat boxes usually sit at the bottom).
+    // Prefer the box closest to the agent's latest message, then the one
+    // lowest on screen (chat boxes usually sit at the bottom).
     return cands
-      .map((el) => ({ el, near: closeness(el, near), bottom: el.getBoundingClientRect().bottom }))
+      .map((el) => ({ el, near: closeness(el, mon.lastNode), bottom: el.getBoundingClientRect().bottom }))
       .sort((a, b) => b.near - a.near || b.bottom - a.bottom)[0].el;
   }
 
-  function findSendButton(input) {
-    if (settings.sendSelector) {
-      return deepQueryAll(settings.sendSelector).find((el) => isVisible(el)) || null;
-    }
+  // A visible button next to the chat box whose label matches one of `res`.
+  function findNearButton(input, res, skip = []) {
     const inputRect = input.getBoundingClientRect();
     let node = input.parentElement;
     for (let depth = 0; node && depth < 6; depth++, node = node.parentElement) {
       const match = Array.from(node.querySelectorAll(CLICKABLE)).find((el) => {
         if (ownUi(el) || !isVisible(el) || gap(el.getBoundingClientRect(), inputRect) > NEAR_PX) return false;
         const label = faaNormalize(labelOf(el));
-        return label.length <= 60 &&
-          !compiled.exclude.some((re) => re.test(label)) &&
-          compiled.send.some((re) => re.test(label));
+        return label.length <= 60 && !skip.some((re) => re.test(label)) && res.some((re) => re.test(label));
       });
       if (match) return match;
     }
+    return null;
+  }
+
+  function findSendButton(input) {
+    if (settings.sendSelector) {
+      return deepQueryAll(settings.sendSelector).find(isVisible) || null;
+    }
+    const btn = findNearButton(input, compiled.send, compiled.stop);
+    if (btn) return btn;
     // Last resort: the submit button of the chat box's own form.
     const submit = input.closest('form')?.querySelector('button[type="submit"], input[type="submit"]');
     return submit && isVisible(submit) ? submit : null;
   }
 
+  // While Flow is still working the send button usually turns into "stop".
+  function agentBusy() {
+    const input = findChatInput();
+    return !!(input && findNearButton(input, compiled.stop));
+  }
+
   function currentText(input) {
     return input instanceof HTMLTextAreaElement || input instanceof HTMLInputElement ? input.value : textOf(input);
+  }
+
+  function selectAll(el) {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
   }
 
   function setInputText(el, text) {
@@ -368,16 +263,19 @@
       el.dispatchEvent(new Event('change', { bubbles: true }));
       return;
     }
-    const range = document.createRange();
-    range.selectNodeContents(el);
-    const sel = window.getSelection();
-    sel.removeAllRanges();
-    sel.addRange(range);
-    const ok = document.execCommand('insertText', false, text);
-    if (!ok || !faaNormalize(textOf(el)).includes(faaNormalize(text))) {
-      el.textContent = text;
-      el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
-    }
+    const want = faaNormalize(text).slice(0, 40);
+    const has = () => faaNormalize(textOf(el)).includes(want);
+    // Rich editors (ProseMirror, Lexical, Quill…) keep line breaks on paste.
+    selectAll(el);
+    const data = new DataTransfer();
+    data.setData('text/plain', text);
+    el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+    if (has()) return;
+    selectAll(el);
+    document.execCommand('insertText', false, text);
+    if (has()) return;
+    el.textContent = text;
+    el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
   }
 
   function pressEnter(el) {
@@ -387,288 +285,342 @@
     el.dispatchEvent(new KeyboardEvent('keyup', init));
   }
 
-  async function waitUntil(fn, timeoutMs, stepMs = 200) {
-    const end = Date.now() + timeoutMs;
-    for (;;) {
-      const v = fn();
-      if (v || Date.now() >= end) return v;
-      await sleep(stepMs);
-    }
-  }
-
-  async function sendReply(trigger) {
-    const input = findChatInput(trigger.node);
+  async function typeAndSend(text) {
+    const input = findChatInput();
     if (!input) {
-      note('Onay mesajı algılandı ama sohbet kutusu bulunamadı (Gelişmiş > giriş seçicisi).');
+      note('Sohbet kutusu bulunamadı (Gelişmiş > sohbet kutusu seçicisi).');
       return false;
     }
-    setInputText(input, settings.replyText);
+    setInputText(input, text);
     await sleep(300);
-    const sent = () => !faaNormalize(currentText(input)).includes(compiled.reply);
-    if (sent()) {
-      note('Cevap sohbet kutusuna yazılamadı (Gelişmiş > giriş seçicisi).');
+    const want = faaNormalize(text).slice(0, 40);
+    const typed = () => faaNormalize(currentText(input)).includes(want);
+    if (!typed()) {
+      note('Metin sohbet kutusuna yazılamadı (Gelişmiş > sohbet kutusu seçicisi).');
       return false;
     }
-
-    // The send button is often disabled (or replaced by "stop") while the
-    // previous answer is still streaming, so give it a few seconds.
-    const btn = await waitUntil(() => {
+    // The send button stays disabled (or is a "stop" button) while Flow is
+    // still busy, so give it some time. Chat boxes without one send on Enter.
+    const found = await waitUntil(() => findSendButton(input), 2000);
+    const btn = found && await waitUntil(() => {
       const b = findSendButton(input);
       return b && isEnabled(b) ? b : null;
-    }, 5000);
+    }, 10000);
     if (btn) {
       clickEl(btn);
-      if (await waitUntil(sent, 2000)) return true;
+      if (await waitUntil(() => !typed(), 3000)) return true;
     }
     pressEnter(input);
-    if (await waitUntil(sent, 2000)) return true;
-    note('Cevap kutuya yazıldı ama gönderilemedi (Gelişmiş > gönder butonu seçicisi).');
+    if (await waitUntil(() => !typed(), 3000)) return true;
+    note('Mesaj yazıldı ama gönderilemedi (Gelişmiş > gönder butonu seçicisi).');
     return false;
   }
 
-  // ---------------------------------------------------------------- loop
+  // Sends a chat message and restarts activity tracking from that moment.
+  async function send(text) {
+    sending = true;
+    mon.echo = faaNormalize(text);
+    try {
+      const ok = await typeAndSend(text);
+      if (ok) {
+        mon.transcript = '';
+        mon.lastText = 0;
+        mon.markAt = mon.lastAny = Date.now();
+        lastNote = '';
+      }
+      return ok;
+    } finally {
+      sending = false;
+    }
+  }
+
+  // ------------------------------------------------------------- activity
+
+  function isEcho(text) {
+    const echo = mon.echo;
+    if (!echo) return false;
+    if (text.length >= 12 && echo.includes(text)) return true; // a piece of our message
+    return text.includes(echo) && text.length <= echo.length + 40; // our message bubble
+  }
 
   function onMutations(mutations) {
     if (!alive()) return shutdown();
-    if (!settings.enabled) return;
-
     const now = Date.now();
-    // Skip page load (old chat history) and re-renders caused by our own
-    // action. A real batch takes far longer than the cooldown, so the next
-    // question is not lost.
-    if (settings.mode !== 'click' && now - startedAt > STARTUP_GRACE_MS && now - lastActionAt >= settings.cooldownMs) {
-      for (const m of mutations) {
-        if (ownUi(m.target) || insideEditable(m.target)) continue;
-        const nodes = m.type === 'characterData' ? [m.target] : Array.from(m.addedNodes);
-        for (const n of nodes) {
-          if (n.nodeType === Node.ELEMENT_NODE && (ownUi(n) || insideEditable(n) || n.matches(EDITABLE))) continue;
-          const text = faaNormalize(textOf(n, MAX_MESSAGE_CHARS));
-          if (!text || text.length > MAX_MESSAGE_CHARS) continue;
-          if (compiled.reply && text.includes(compiled.reply)) continue;
-          if (hasTrigger(text)) {
-            pendingTrigger = { text: short(text, 120), node: n, at: Date.now() };
-            log('Tetik mesajı:', pendingTrigger.text);
-          }
-        }
+    for (const m of mutations) {
+      if (ownUi(m.target) || insideEditable(m.target)) continue;
+      mon.lastAny = now;
+      if (now - startedAt < STARTUP_GRACE_MS) continue;
+      const nodes = m.type === 'characterData' ? [m.target] : Array.from(m.addedNodes);
+      for (const n of nodes) {
+        if (n.nodeType === Node.ELEMENT_NODE && (ownUi(n) || n.matches(EDITABLE))) continue;
+        const text = faaNormalize(textOf(n, MAX_CHUNK_CHARS, true));
+        if (!text || text.length > MAX_CHUNK_CHARS || !/\p{L}/u.test(text) || isEcho(text)) continue;
+        mon.lastText = now;
+        mon.lastNode = n;
+        mon.transcript = `${mon.transcript} ${text}`.slice(-4000);
       }
     }
-    scheduleScan();
   }
 
-  function scheduleScan(delay = 300) {
-    if (scanTimer) return;
-    scanTimer = setTimeout(() => {
-      scanTimer = null;
-      scan();
-    }, delay);
+  const agentAsked = () => !!mon.transcript && hasTrigger(mon.transcript.slice(-600));
+
+  // ------------------------------------------------------------------ job
+
+  function addLog(msg) {
+    log(msg);
+    job.log = [...(job.log || []).slice(-99), { t: Date.now(), msg }];
   }
 
-  function limitReached() {
-    return settings.maxApprovals > 0 && stats.count >= settings.maxApprovals;
+  async function saveJob() {
+    if (job && alive()) await chrome.storage.local.set({ job });
   }
 
-  function scan() {
+  function note(text) {
+    if (text === lastNote) return;
+    lastNote = text;
+    log(text);
+    if (job) {
+      job.note = text;
+      addLog(`⚠ ${text}`);
+      saveJob().catch(() => {});
+    }
+  }
+
+  async function pauseJob(reason) {
+    job.status = 'paused';
+    job.note = reason;
+    addLog(`Duraklatıldı: ${reason}`);
+    toast(`Duraklatıldı: ${reason}`, true);
+    await saveJob();
+  }
+
+  async function finishJob() {
+    job.status = 'done';
+    job.finishedAt = Date.now();
+    job.note = '';
+    addLog('Görev tamamlandı.');
+    toast('Görev tamamlandı ✓');
+    await saveJob();
+  }
+
+  async function sendFailed() {
+    job.failures = (job.failures || 0) + 1;
+    retryAt = Date.now() + RETRY_DELAY_MS;
+    if (job.failures >= 3) return pauseJob(lastNote || 'Mesaj gönderilemedi.');
+    return saveJob();
+  }
+
+  async function jobReply(step, reason) {
+    if (job.replies >= step.expected + settings.maxExtraReplies) {
+      return pauseJob('Flow beklenenden çok onay istedi; kontrol edip Sürdür\'e basın.');
+    }
+    const text = step.kind === 'rename' ? settings.renameReplyText : settings.replyText;
+    if (!(await send(text))) return sendFailed();
+    job.replies++;
+    job.totalReplies = (job.totalReplies || 0) + 1;
+    job.failures = 0;
+    job.note = '';
+    addLog(`"${text}" yazıldı (${reason}). Onay ${job.replies}/${step.expected}`);
+    toast(`"${text}" yazıldı (${job.replies}/${step.expected})`);
+    await saveJob();
+  }
+
+  async function nextStep(reason) {
+    addLog(`Adım tamamlandı (${reason}): ${job.steps[job.stepIndex].label}`);
+    job.stepIndex++;
+    job.stepSent = false;
+    job.replies = 0;
+    if (job.stepIndex >= job.steps.length) return finishJob();
+    await saveJob();
+  }
+
+  async function jobTick() {
+    const step = job.steps[job.stepIndex];
+    if (!step) return finishJob();
+    const now = Date.now();
+    if (now < retryAt) return;
+
+    if (!job.stepSent) {
+      if (agentBusy() || now - mon.lastAny < 1000) return; // wait for a quiet moment
+      if (!(await send(step.text))) return sendFailed();
+      job.stepSent = true;
+      job.replies = 0;
+      job.failures = 0;
+      job.note = '';
+      addLog(`Adım ${job.stepIndex + 1}/${job.steps.length} gönderildi: ${step.label}`);
+      toast(`Adım ${job.stepIndex + 1}/${job.steps.length}: ${step.label}`);
+      return saveJob();
+    }
+
+    if (now - mon.markAt < MIN_WAIT_AFTER_SEND_MS || agentBusy()) return;
+    const textIdle = now - Math.max(mon.lastText, mon.markAt);
+    if (agentAsked() && textIdle >= settings.questionIdleMs) return jobReply(step, 'soru algılandı');
+    if (now - mon.lastAny < settings.turnEndIdleMs) return;
+    // Flow stopped without a recognizable question. If it has not yet asked
+    // as often as the batch size implies, it is most likely waiting for us.
+    if (job.replies < step.expected) return jobReply(step, 'Flow durdu, partiler bitmedi');
+    return nextStep('Flow durdu');
+  }
+
+  async function standaloneTick() {
+    if (job?.status === 'paused') return; // the user paused on purpose
+    const now = Date.now();
+    if (now - mon.markAt < STANDALONE_COOLDOWN_MS || now - mon.lastText > QUESTION_TTL_MS) return;
+    if (now - mon.lastText < settings.questionIdleMs || !agentAsked() || agentBusy()) return;
+    if (!(await send(settings.replyText))) return;
+    toast(`"${settings.replyText}" yazıldı`);
+    const { standalone } = await chrome.storage.local.get('standalone');
+    await chrome.storage.local.set({
+      standalone: { count: (standalone?.count || 0) + 1, lastAt: Date.now() },
+    });
+  }
+
+  async function tick() {
     if (!alive()) return shutdown();
-    if (!settings.enabled || picking || acting) return;
-    if (pendingTrigger && Date.now() - pendingTrigger.at > TRIGGER_TTL_MS) pendingTrigger = null;
-    if (limitReached()) {
-      if (!limitAnnounced) {
-        limitAnnounced = true;
-        toast(`Limit doldu (${settings.maxApprovals}). Otomatik onay duraklatıldı.`, true);
-        note(`Limit doldu (${settings.maxApprovals}); sayacı sıfırlayın veya limiti artırın.`);
-      }
-      return;
-    }
-    const now = Date.now();
-    if (now - lastActionAt < settings.cooldownMs) return;
-    if (now - lastScanAt < MIN_SCAN_GAP_MS) return scheduleScan(MIN_SCAN_GAP_MS);
-    lastScanAt = now;
-
-    const wantsButton = settings.mode !== 'message' && findApproveButton();
-    const wantsMessage = settings.mode !== 'click' && pendingTrigger;
-    if (wantsButton || wantsMessage) act();
-  }
-
-  async function act() {
-    acting = true;
+    if (sending) return;
     try {
-      await sleep(jitter(settings.delayMs));
-      if (!settings.enabled || picking || limitReached()) return;
-
-      // Re-check after the delay: the dialog may have changed or closed.
-      const btn = settings.mode !== 'message' ? findApproveButton() : null;
-      if (btn) {
-        clicked.add(btn);
-        clickEl(btn);
-        pendingTrigger = null;
-        await record(`Buton tıklandı: "${short(labelOf(btn))}"`);
-        return;
-      }
-      if (settings.mode !== 'click' && pendingTrigger) {
-        const trigger = pendingTrigger;
-        pendingTrigger = null;
-        lastActionAt = Date.now();
-        if (await sendReply(trigger)) await record(`Mesaj gönderildi: "${short(settings.replyText)}"`);
-      }
+      if (job?.status === 'running') await jobTick();
+      else if (settings.autoReply) await standaloneTick();
     } catch (err) {
       console.warn(TAG, err);
-    } finally {
-      acting = false;
     }
   }
 
-  function start() {
-    observer = new MutationObserver(onMutations);
-    observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
-    intervalId = setInterval(scan, 2500);
-    scheduleScan();
-    log('Hazır', settings);
+  // ------------------------------------------------------------- commands
+
+  function newJob(prompts, tabId) {
+    return {
+      id: instanceId + Date.now(),
+      owner: instanceId,
+      tabId,
+      status: 'running',
+      promptCount: prompts.length,
+      steps: faaBuildSteps(prompts, settings),
+      stepIndex: 0,
+      stepSent: false,
+      replies: 0,
+      totalReplies: 0,
+      failures: 0,
+      note: '',
+      log: [],
+      startedAt: Date.now(),
+    };
   }
 
-  // ------------------------------------------------------------ page UI
-
-  let ui = null;
-
-  function getUi() {
-    if (ui && ui.host.isConnected) return ui;
-    const host = document.createElement('div');
-    host.id = 'faa-host';
-    host.style.cssText = 'all: initial; position: fixed; z-index: 2147483647; inset: 0; pointer-events: none;';
-    const root = host.attachShadow({ mode: 'closed' });
-    root.innerHTML = `
-      <style>
-        .toast, .banner {
-          position: fixed; left: 16px; max-width: min(420px, calc(100vw - 32px));
-          font: 13px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-          color: #fff; background: #1f2937; border-radius: 10px; padding: 10px 14px;
-          box-shadow: 0 6px 24px rgba(0,0,0,.25); transition: opacity .3s;
+  async function handleCommand(msg) {
+    const mine = job && job.owner === instanceId;
+    switch (msg.type) {
+      case 'faa:ping':
+        return { ok: true };
+      case 'faa:status':
+        return {
+          ok: true,
+          owner: !!mine,
+          hasInput: !!findChatInput(),
+          busy: agentBusy(),
+          idleSec: Math.round((Date.now() - mon.lastAny) / 1000),
+          textIdleSec: Math.round((Date.now() - Math.max(mon.lastText, mon.markAt)) / 1000),
+          asked: agentAsked(),
+        };
+      case 'faa:start': {
+        if (mine && job.status === 'running') return { ok: false, error: 'Bu sekmede zaten çalışan bir görev var.' };
+        const prompts = (msg.prompts || []).filter(Boolean);
+        if (!prompts.length) return { ok: false, error: 'Prompt bulunamadı.' };
+        job = newJob(prompts, msg.tabId);
+        retryAt = 0;
+        addLog(`Görev başladı: ${prompts.length} prompt, ${job.steps.length} adım.`);
+        await saveJob();
+        return { ok: true };
+      }
+      case 'faa:resume': {
+        const { job: stored } = await chrome.storage.local.get('job');
+        if (!stored || stored.status === 'done') return { ok: false, error: 'Sürdürülecek görev yok.' };
+        job = Object.assign(stored, { owner: instanceId, tabId: msg.tabId, status: 'running', failures: 0, note: '' });
+        retryAt = 0;
+        // Start the idle clocks now; if Flow is already waiting, the
+        // turn-end rule answers it after `turnEndIdleMs`.
+        mon.transcript = '';
+        mon.markAt = mon.lastAny = Date.now();
+        addLog('Sürdürüldü.');
+        await saveJob();
+        return { ok: true };
+      }
+      case 'faa:pause':
+      case 'faa:stop':
+      case 'faa:next': {
+        if (!mine) return { ok: false, notOwner: true };
+        if (msg.type === 'faa:pause') {
+          if (job.status === 'running') await pauseJob('Kullanıcı duraklattı.');
+        } else if (msg.type === 'faa:stop') {
+          job.status = 'stopped';
+          addLog('Görev durduruldu.');
+          await saveJob();
+        } else {
+          await nextStep('elle geçildi');
         }
-        .toast { bottom: 16px; opacity: 0; }
-        .toast.show { opacity: .96; }
-        .toast.warn { background: #b45309; }
-        .banner { top: 16px; left: 50%; transform: translateX(-50%); background: #1a73e8; display: none; }
-        .banner.show { display: block; }
-        .box {
-          position: fixed; display: none; border: 2px solid #1a73e8; border-radius: 6px;
-          background: rgba(26,115,232,.12);
-        }
-      </style>
-      <div class="box"></div>
-      <div class="banner"></div>
-      <div class="toast"></div>`;
-    document.documentElement.appendChild(host);
-    ui = {
-      host,
-      box: root.querySelector('.box'),
-      banner: root.querySelector('.banner'),
-      toast: root.querySelector('.toast'),
-      timer: null,
-    };
-    return ui;
-  }
-
-  function toast(text, warn = false) {
-    const u = getUi();
-    u.toast.textContent = `Flow Oto-Onay: ${text}`;
-    u.toast.classList.toggle('warn', warn);
-    u.toast.classList.add('show');
-    clearTimeout(u.timer);
-    u.timer = setTimeout(() => u.toast.classList.remove('show'), warn ? 8000 : 3500);
-  }
-
-  // ------------------------------------------------- "teach the button" mode
-
-  function pickTarget(e) {
-    const el = e.composedPath().find((n) => n.nodeType === Node.ELEMENT_NODE);
-    if (!el || ownUi(el)) return null;
-    return el.closest(CLICKABLE) || el;
-  }
-
-  function startPick() {
-    if (picking) return;
-    picking = true;
-    const u = getUi();
-    u.banner.textContent = 'Flow Oto-Onay: Onay/devam butonuna tıklayın. (Esc: iptal)';
-    u.banner.classList.add('show');
-
-    const block = (e) => {
-      e.preventDefault();
-      e.stopImmediatePropagation();
-    };
-    const onMove = (e) => {
-      const el = pickTarget(e);
-      if (!el) return;
-      const r = el.getBoundingClientRect();
-      Object.assign(u.box.style, {
-        display: 'block', left: `${r.left - 3}px`, top: `${r.top - 3}px`,
-        width: `${r.width + 6}px`, height: `${r.height + 6}px`,
-      });
-    };
-    const onClick = (e) => {
-      block(e);
-      const el = pickTarget(e);
-      stop();
-      if (el) savePicked(el);
-    };
-    const onKey = (e) => {
-      if (e.key !== 'Escape') return;
-      block(e);
-      stop();
-      toast('Seçim iptal edildi.');
-    };
-    const blocked = ['pointerdown', 'mousedown', 'pointerup', 'mouseup'];
-    function stop() {
-      picking = false;
-      u.banner.classList.remove('show');
-      u.box.style.display = 'none';
-      window.removeEventListener('mousemove', onMove, true);
-      window.removeEventListener('click', onClick, true);
-      window.removeEventListener('keydown', onKey, true);
-      blocked.forEach((t) => window.removeEventListener(t, block, true));
-    }
-    window.addEventListener('mousemove', onMove, true);
-    window.addEventListener('click', onClick, true);
-    window.addEventListener('keydown', onKey, true);
-    blocked.forEach((t) => window.addEventListener(t, block, true));
-  }
-
-  async function savePicked(el) {
-    const label = short(el.getAttribute('aria-label') || textOf(el, 200) || el.getAttribute('title') || el.value, 60);
-    if (!label) {
-      toast('Bu öğede metin yok. Gelişmiş bölümünden CSS seçici girebilirsiniz.', true);
-      return;
-    }
-    const res = await chrome.storage.local.get('settings');
-    const s = faaMergeSettings(res.settings);
-    if (!s.buttonPhrases.some((p) => faaNormalize(p) === faaNormalize(label))) {
-      s.buttonPhrases = [...s.buttonPhrases, label];
-    }
-    // A phrase the user explicitly taught should not be blocked by the exclude list.
-    s.excludePhrases = s.excludePhrases.filter((p) => !faaWordRegExp(p)?.test(faaNormalize(label)));
-    await chrome.storage.local.set({ settings: s });
-    settings = s;
-    compiled = compile(s);
-
-    if (s.requireTrigger && !triggerNear(el)) {
-      const ctx = contextOf(el);
-      toast(
-        `"${label}" kaydedildi, ancak çevresinde tetik ifadesi yok. ` +
-        `Popup'ta "Tetik metni gerekli"yi kapatın ya da tetik listesine ekleyin` +
-        (ctx ? `: "${ctx}"` : '.'),
-        true,
-      );
-      note(`"${label}" kaydedildi; çevresindeki metin: ${ctx || '(yok)'}`);
-    } else {
-      toast(`"${label}" kaydedildi. Bir dahaki sefere otomatik tıklanacak.`);
+        return { ok: true };
+      }
+      default:
+        return null;
     }
   }
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-    if (msg?.type === 'faa:pick') {
-      startPick();
-      sendResponse({ ok: true });
-    } else if (msg?.type === 'faa:ping') {
-      sendResponse({ ok: true, url: location.href });
-    }
+    if (!msg?.type?.startsWith('faa:')) return false;
+    handleCommand(msg).then(sendResponse, (err) => sendResponse({ ok: false, error: String(err) }));
+    return true; // async response
   });
+
+  // ------------------------------------------------------------- storage
+
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local') return;
+    if (changes.settings) {
+      settings = faaMergeSettings(changes.settings.newValue);
+      compiled = compile(settings);
+    }
+    // Another tab took the job over, or the side panel cleared it.
+    if (changes.job && job && changes.job.newValue?.owner !== instanceId) job = null;
+  });
+
+  chrome.storage.local.get('settings', (res) => {
+    settings = faaMergeSettings(res.settings);
+    compiled = compile(settings);
+    observer = new MutationObserver(onMutations);
+    observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+    tickId = setInterval(tick, TICK_MS);
+    log('Hazır');
+  });
+
+  // -------------------------------------------------------------- page UI
+
+  let ui = null;
+
+  function toast(text, warn = false) {
+    if (!ui || !ui.host.isConnected) {
+      const host = document.createElement('div');
+      host.id = 'faa-host';
+      host.style.cssText = 'all: initial; position: fixed; z-index: 2147483647; inset: 0; pointer-events: none;';
+      const root = host.attachShadow({ mode: 'closed' });
+      root.innerHTML = `
+        <style>
+          .toast {
+            position: fixed; left: 16px; bottom: 16px; max-width: min(420px, calc(100vw - 32px));
+            font: 13px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+            color: #fff; background: #1f2937; border-radius: 10px; padding: 10px 14px;
+            box-shadow: 0 6px 24px rgba(0,0,0,.25); opacity: 0; transition: opacity .3s;
+          }
+          .toast.show { opacity: .96; }
+          .toast.warn { background: #b45309; }
+        </style>
+        <div class="toast"></div>`;
+      document.documentElement.appendChild(host);
+      ui = { host, el: root.querySelector('.toast'), timer: null };
+    }
+    ui.el.textContent = `Flow Oto-Onay: ${text}`;
+    ui.el.classList.toggle('warn', warn);
+    ui.el.classList.add('show');
+    clearTimeout(ui.timer);
+    ui.timer = setTimeout(() => ui.el.classList.remove('show'), warn ? 8000 : 3500);
+  }
 })();

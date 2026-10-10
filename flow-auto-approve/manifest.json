@@ -1,15 +1,18 @@
 {
   "manifest_version": 3,
   "name": "Flow Oto-Onay",
-  "version": "1.0.0",
-  "description": "Google Flow'un her toplu görsel üretiminden sonra sorduğu devam onayını otomatik verir.",
-  "permissions": ["storage"],
+  "version": "2.0.0",
+  "description": "Promptları Google Flow sohbetine sırayla gönderir, her partide \"Devam et\" der ve bitince görselleri sırayla adlandırtır.",
+  "minimum_chrome_version": "116",
+  "permissions": ["storage", "sidePanel"],
   "background": {
     "service_worker": "src/background.js"
   },
+  "side_panel": {
+    "default_path": "src/panel.html"
+  },
   "action": {
     "default_title": "Flow Oto-Onay",
-    "default_popup": "src/popup.html",
     "default_icon": {
       "16": "icons/icon16.png",
       "32": "icons/icon32.png",
@@ -26,7 +29,7 @@
   "content_scripts": [
     {
       "matches": ["https://labs.google/*"],
-      "js": ["src/defaults.js", "src/content.js"],
+      "js": ["src/shared.js", "src/content.js"],
       "run_at": "document_idle"
     }
   ]
