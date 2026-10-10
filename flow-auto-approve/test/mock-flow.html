@@ -42,6 +42,9 @@
   // reports "Listedeki N sahnenin tamamı … oluşturuldu".
   const SELF = params.get('self') === '1';
   let stopEarlyAt = Number(params.get('stopEarlyAt') || 0); // claims to be done after this many, once
+  // These prompts fail on the first try, like Flow's rate limit (THROTTLED) errors.
+  const FAIL_FIRST = new Set((params.get('failFirst') || '').split(',').filter(Boolean).map(Number));
+  const failed = [];
   const BATCH = Number(params.get('batch') || 20);
   const STEP_MS = Number(params.get('stepMs') || 30);
 
@@ -129,18 +132,33 @@
     if (SELF) return runGenerationSelf();
     setBusy(true);
     let made = 0;
+    const failedNow = [];
     while (state.queue.length && made < BATCH) {
       const p = state.queue.shift();
+      made++;
+      if (FAIL_FIRST.delete(p.n)) {
+        const tile = document.createElement('figure');
+        tile.textContent = 'Başarısız Bir hata oluştu. Lütfen tekrar deneyin.';
+        grid.appendChild(tile);
+        failed.push(p);
+        failedNow.push(p.n);
+        await sleep(STEP_MS);
+        continue;
+      }
       const fig = document.createElement('figure');
       fig.textContent = `#${p.n}`;
       grid.appendChild(fig);
       state.images.push({ n: p.n, prompt: p.text, name: '', el: fig });
-      made++;
       progress.textContent = `${made}/${BATCH}`;
       document.getElementById('total').textContent = state.images.length;
       await sleep(STEP_MS);
     }
     progress.textContent = '';
+    if (failedNow.length) {
+      state.phase = 'gen';
+      return agentSay(`Bu partide ${failedNow.join(', ')} numaralı promptlar istek limiti ` +
+        '(PUBLIC_ERROR_USER_REQUESTS_THROTTLED) nedeniyle tamamlanamadı. Nasıl ilerleyelim?');
+    }
     if (state.queue.length) {
       state.phase = 'gen';
       await agentSay(ODD
@@ -183,6 +201,23 @@
       state.queue.push(...prompts);
       await agentSay(`Tamam, ${prompts.length} görsel oluşturuyorum.`);
       return runGeneration();
+    }
+    if (/yeniden dene/i.test(text)) {
+      state.queue.unshift(...failed.splice(0));
+      return runGeneration();
+    }
+    if (/gözden geçir/i.test(text)) {
+      const prefix = state.renamePrefix || 'gorsel';
+      for (const im of state.images) if (!im.name) { im.name = `${prefix}${im.n}`; im.el.textContent = im.name; }
+      const total = Number((text.match(/ile \S+?(\d+) arasındaki/) || [])[1]);
+      return agentSay(`Tüm ${total} görselin adı doğru.`);
+    }
+    if (/kontrol et/i.test(text)) {
+      const have = new Set(state.images.map((im) => im.n));
+      const total = Number((text.match(/1 ile (\d+)/) || [])[1]);
+      for (const p of failed.splice(0)) if (!have.has(p.n)) state.queue.push(p);
+      if (state.queue.length) await runGeneration();
+      return agentSay(`Tüm ${total} promptun görseli hazır.`);
     }
     if (/adland|isimlendir/i.test(text)) {
       state.renamePrefix = (text.match(/adı\s+(\S+?)1\b/) || [])[1] || 'img';

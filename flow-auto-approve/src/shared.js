@@ -16,6 +16,24 @@ var FAA_DEFAULTS = {
   // line) or 'timecode' (each "[00:00 - 00:01]" starts a prompt).
   promptSplit: 'auto',
   renameAfter: true,
+  // After generating, ask Flow to check every prompt and redo failed/missing images.
+  repairAfter: true,
+  repairTemplate:
+    'Şimdi 1 ile {toplam} arasındaki tüm promptları kontrol et. Görseli olmayan ya da başarısız olan ' +
+    'her prompt için görseli yeniden oluştur. Hepsi tamamsa "Tüm {toplam} promptun görseli hazır" diye yaz.',
+  // After renaming, ask Flow to go over every image and fix names it missed.
+  renameCheckAfter: true,
+  renameCheckTemplate:
+    'Şimdi projedeki tüm görsellerin adlarını gözden geçir. Adı {onek}1 ile {onek}{toplam} arasındaki ' +
+    'biçimde olmayan her görseli, oluşturulduğu prompt numarasına göre yeniden adlandır. Görseli hiç olmayan ' +
+    'bir prompt varsa önce o görseli oluştur, sonra adlandır. Hepsi doğruysa "Tüm {toplam} görselin adı doğru" diye yaz.',
+  // When Flow reports failures (rate limit, errors), wait longer and ask it to retry.
+  retryText: 'Başarısız olan ya da atlanan görselleri yeniden dene, sonra kaldığın yerden devam et.',
+  failurePhrases: [
+    'başarısız', 'bir hata oluştu', 'throttled', 'istek limiti', 'istek sınırı', 'kota', 'tamamlanamadı',
+    'atlanan', 'eksik kalan', 'failed', 'rate limit', 'quota', 'too many requests',
+  ],
+  throttleWaitMs: 90000,
   namePrefix: 'gorsel',
   // Placeholders: {adet} prompts in this message, {parti} batch size,
   // {baslangic}/{bitis} first/last prompt number, {toplam} all prompts,
@@ -151,6 +169,17 @@ function faaBuildSteps(prompts, s) {
       counts: [chunk.length, end, total],
     });
   }
+  if (s.repairAfter && total) {
+    steps.push({
+      kind: 'repair',
+      label: `Kontrol: eksik/başarısız görseller (1–${total})`,
+      text: faaFill(s.repairTemplate, {
+        adet: total, parti: batch, baslangic: 1, bitis: total, toplam: total, onek: s.namePrefix, promptlar: '',
+      }),
+      expected: 0,
+      counts: [total],
+    });
+  }
   if (s.renameAfter && total) {
     steps.push({
       kind: 'rename',
@@ -159,6 +188,17 @@ function faaBuildSteps(prompts, s) {
         adet: total, parti: batch, baslangic: 1, bitis: total, toplam: total, onek: s.namePrefix, promptlar: '',
       }),
       expected: Math.ceil(total / batch) - 1,
+      counts: [total],
+    });
+  }
+  if (s.renameAfter && s.renameCheckAfter && total) {
+    steps.push({
+      kind: 'renamecheck',
+      label: `Ad kontrolü: ${s.namePrefix}1–${s.namePrefix}${total}`,
+      text: faaFill(s.renameCheckTemplate, {
+        adet: total, parti: batch, baslangic: 1, bitis: total, toplam: total, onek: s.namePrefix, promptlar: '',
+      }),
+      expected: 0,
       counts: [total],
     });
   }

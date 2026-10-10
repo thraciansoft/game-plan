@@ -14,12 +14,24 @@ prompt sırasına göre `gorsel1`, `gorsel2`… diye adlandırtır.
    **Devam et** yazar. Flow sormadan partileri kendisi sürdürürse eklenti
    karışmaz. Flow "120 sahnenin tamamı oluşturuldu" dediğinde sıradaki adıma
    geçer.
-3. 120 görsel bitince eklenti şu mesajı gönderir: *"1. prompttan oluşan
+   Flow bir partide "Başarısız / istek limiti (THROTTLED)" derse eklenti
+   kotanın toparlanması için bekler (varsayılan 90 sn). Sonra "Devam et" yerine
+   **"Başarısız olan ya da atlanan görselleri yeniden dene, sonra kaldığın
+   yerden devam et"** yazar.
+3. Üretim bitince eklenti bir **kontrol** mesajı gönderir: Flow 1–120
+   arasındaki her promptu kontrol eder ve görseli olmayan ya da başarısız
+   olanları yeniden üretir.
+4. Ardından eklenti şu isimlendirme mesajını gönderir: *"1. prompttan oluşan
    görselin adı gorsel1, 2. prompttan oluşanın adı gorsel2 olsun … son görsel
    gorsel120"*.
-4. Flow her 20 görselde bir "Kalanları isimlendireyim mi?" diye sorar. Eklenti
+5. Flow her 20 görselde bir "Kalanları isimlendireyim mi?" diye sorar. Eklenti
    **Evet, devam et** yazar.
-5. Bitince panelde **Tamamlandı** yazar.
+6. Son olarak bir **ad kontrolü** mesajı gider: Flow bütün görsellerin adlarını
+   gözden geçirir ve `gorselN` biçiminde olmayanları düzeltir.
+7. Bitince panelde **Tamamlandı** yazar.
+
+Kontrol adımlarını paneldeki onay kutularından kapatabilirsiniz. Mesaj
+metinlerini Gelişmiş ayarlardan değiştirebilirsiniz.
 
 Eklenti yalnızca sohbete yazar, sayfadaki hiçbir butona tıklamaz. Tek istisna,
 yazdığı mesajı göndermek için sohbet kutusunun gönder butonudur.

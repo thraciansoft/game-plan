@@ -73,6 +73,7 @@
       stop: words(s.stopPhrases),
       trigger: (s.triggerPhrases || []).map(faaNormalize).filter(Boolean),
       done: words(s.donePhrases),
+      failure: (s.failurePhrases || []).map(faaNormalize).filter(Boolean),
     };
   }
 
@@ -368,6 +369,8 @@
   }
 
   const agentAsked = () => !!mon.transcript && hasTrigger(mon.transcript.slice(-600));
+  // Flow reported failed images (errors, rate limit) since our last message.
+  const flowFailed = () => compiled.failure.some((p) => mon.transcript.includes(p));
 
   // Flow says the step is finished ("Listedeki 144 sahnenin tamamı …
   // oluşturuldu"). Only the sentence with the last such word counts, and a
@@ -437,7 +440,9 @@
     if (job.replies >= step.expected + settings.maxExtraReplies) {
       return pauseJob('Flow beklenenden çok durdu ya da tüm promptların bittiğini söylemedi. Flow\'u kontrol edip Sürdür veya Sonraki adım\'a basın.');
     }
-    const text = step.kind === 'rename' ? settings.renameReplyText : settings.replyText;
+    let text = settings.replyText;
+    if (step.kind === 'rename' || step.kind === 'renamecheck') text = settings.renameReplyText;
+    else if (step.kind === 'repair' || flowFailed()) text = settings.retryText;
     if (!(await send(text))) return sendFailed();
     job.replies++;
     job.totalReplies = (job.totalReplies || 0) + 1;
@@ -477,6 +482,9 @@
 
     if (now - mon.markAt < MIN_WAIT_AFTER_SEND_MS || agentBusy()) return;
     const textIdle = now - Math.max(mon.lastText, mon.markAt);
+    // After errors or rate limiting, give Flow's quota time to recover before
+    // asking it to retry.
+    if (step.kind !== 'rename' && step.kind !== 'renamecheck' && flowFailed() && now - mon.lastAny < settings.throttleWaitMs) return;
     if (agentAsked() && textIdle >= settings.questionIdleMs) return jobReply(step, 'soru algılandı');
     if (now - mon.lastAny < settings.turnEndIdleMs) return;
     // Flow went quiet without a question we know. Move on only when it said

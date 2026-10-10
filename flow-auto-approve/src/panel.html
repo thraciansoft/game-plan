@@ -48,8 +48,12 @@
         <input type="text" id="namePrefix">
       </label>
     </div>
+    <label class="check"><input type="checkbox" id="repairAfter">
+      <span>Üretimden sonra eksik/başarısız görselleri yeniden yaptır</span></label>
     <label class="check"><input type="checkbox" id="renameAfter">
       <span>Bitince sırayla isimlendirt (<span id="nameExample">gorsel1, gorsel2…</span>)</span></label>
+    <label class="check"><input type="checkbox" id="renameCheckAfter">
+      <span>İsimlendirmeden sonra adları kontrol ettir (eksik kalanları düzelttir)</span></label>
   </section>
 
   <section>
@@ -122,6 +126,23 @@
       </label>
     </div>
     <p class="muted">"Tur bitti sayma": Flow soru sormadan durursa sayfa bu kadar süre tamamen sakin kaldığında adım bitmiş sayılır.</p>
+    <label class="field">Hata sonrası cevap <small>(Flow başarısız/limit derse)</small>
+      <input type="text" id="retryText">
+    </label>
+    <div class="row">
+      <label class="field">Limit/hata sonrası bekleme (ms)
+        <input type="number" id="throttleWaitMs" min="0" step="10000">
+      </label>
+    </div>
+    <label class="field">Hata ifadeleri
+      <textarea id="failurePhrases" rows="3"></textarea>
+    </label>
+    <label class="field">Kontrol mesajı şablonu
+      <textarea id="repairTemplate" rows="3"></textarea>
+    </label>
+    <label class="field">Ad kontrolü mesajı şablonu
+      <textarea id="renameCheckTemplate" rows="3"></textarea>
+    </label>
     <label class="field">Üretim mesajı şablonu
       <textarea id="generateTemplate" rows="4"></textarea>
     </label>

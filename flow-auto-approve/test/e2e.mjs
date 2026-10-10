@@ -108,7 +108,7 @@ async function waitJob(status, timeout = 60000) {
 }
 
 const mock = (page) => page.evaluate(() => ({
-  images: mockState.images.map(({ n, name }) => ({ n, name })),
+  images: mockState.images.map(({ n, name }) => ({ n, name })).sort((a, b) => a.n - b.n),
   messages: mockState.messages,
   distractorClicks: mockState.distractorClicks || 0,
 }));
@@ -116,6 +116,9 @@ const mock = (page) => page.evaluate(() => ({
 function kinds(messages) {
   return messages.map((m) => {
     if (m.includes('numaralı')) return 'GEN';
+    if (m.includes('gözden geçir')) return 'ADKONTROL';
+    if (m.includes('kontrol et')) return 'KONTROL';
+    if (m.includes('yeniden dene')) return 'R';
     if (/adland/i.test(m)) return 'RENAME';
     if (m === 'Devam et') return 'D';
     if (m === 'Evet, devam et') return 'E';
@@ -146,16 +149,19 @@ async function jobScenario(name, query, patch, expectedKinds, n = 45) {
 
 // 45 prompts -> Flow stops after 20 and 40: two "Devam et", then the rename
 // step with two "Evet, devam et".
-await jobScenario('textarea + durdur butonu', 'composer=textarea', {}, 'GEN D D RENAME E E');
+await jobScenario('textarea + durdur butonu', 'composer=textarea', {}, 'GEN D D KONTROL RENAME E E ADKONTROL');
 await jobScenario('zengin editör + Enter, durdur butonu yok, sonda da soruyor',
-  'composer=ce&stop=0&askAtEnd=1', {}, 'GEN D D D RENAME E E');
-await jobScenario('tanınmayan soru cümlesi (tur sonu kuralı)', 'composer=textarea&odd=1', {}, 'GEN D D RENAME E E');
-await jobScenario('mesaj başına 20 prompt', 'composer=textarea', { promptsPerMessage: 20 }, 'GEN GEN GEN RENAME E E');
+  'composer=ce&stop=0&askAtEnd=1', {}, 'GEN D D D KONTROL RENAME E E ADKONTROL');
+await jobScenario('tanınmayan soru cümlesi (tur sonu kuralı)', 'composer=textarea&odd=1', {}, 'GEN D D KONTROL RENAME E E ADKONTROL');
+await jobScenario('mesaj başına 20 prompt', 'composer=textarea', { promptsPerMessage: 20 }, 'GEN GEN GEN KONTROL RENAME E E ADKONTROL');
 // The real Flow: never asks, runs every batch itself and ends with
 // "Listedeki 45 sahnenin tamamı … oluşturuldu" (ProseMirror box, arrow_forward button).
-await jobScenario('gerçek Flow gibi: sormadan kendi partiliyor', 'composer=pm&self=1', {}, 'GEN RENAME');
+await jobScenario('gerçek Flow gibi: sormadan kendi partiliyor', 'composer=pm&self=1', {}, 'GEN KONTROL RENAME ADKONTROL');
 // Flow claims "the 40 scenes are all done" with 45 prompts: not finished, so "Devam et".
-await jobScenario('Flow eksik bitirip "tamamı" diyor', 'composer=pm&self=1&stopEarlyAt=40', {}, 'GEN D RENAME');
+// Rate-limit errors: wait, then ask Flow to retry the failed prompts, not just "Devam et".
+await jobScenario('istek limiti hatası: yeniden denetiyor', 'composer=textarea&failFirst=25,26,27',
+  { throttleWaitMs: 1500 }, 'GEN D R KONTROL RENAME E E ADKONTROL');
+await jobScenario('Flow eksik bitirip "tamamı" diyor', 'composer=pm&self=1&stopEarlyAt=40', {}, 'GEN D KONTROL RENAME ADKONTROL');
 
 // Without a job: answers "Devam edeyim mi?" on its own, but only when enabled.
 {
@@ -213,7 +219,7 @@ await jobScenario('Flow eksik bitirip "tamamı" diyor', 'composer=pm&self=1&stop
   await panel.waitForTimeout(1000);
   const st = await mock(page);
   check('panel: sürdürünce görev tamamlandı', job?.status === 'done', job?.note);
-  check('panel: mesaj sırası doğru', kinds(st.messages) === 'GEN D D RENAME E E', kinds(st.messages));
+  check('panel: mesaj sırası doğru', kinds(st.messages) === 'GEN D D KONTROL RENAME E E ADKONTROL', kinds(st.messages));
   checkImages('panel', st, 45);
   check('panel: durum "Tamamlandı"', (await panel.textContent('#statusChip')) === 'Tamamlandı');
 
@@ -313,7 +319,7 @@ await context.close();
     { timeout: 60000 }).catch(() => {});
   const st = await mock(page);
   check('enjeksiyon: sayfa yenilenmeden görev çalıştı',
-    (await panel.textContent('#statusChip')) === 'Tamamlandı' && kinds(st.messages) === 'GEN D RENAME E',
+    (await panel.textContent('#statusChip')) === 'Tamamlandı' && kinds(st.messages) === 'GEN D KONTROL RENAME E ADKONTROL',
     `${await panel.textContent('#error')} ${kinds(st.messages)}`);
   checkImages('enjeksiyon', st, 25);
 

@@ -1,9 +1,9 @@
-const LIST_FIELDS = ['triggerPhrases', 'donePhrases', 'sendPhrases', 'stopPhrases'];
+const LIST_FIELDS = ['triggerPhrases', 'donePhrases', 'failurePhrases', 'sendPhrases', 'stopPhrases'];
 const TEXT_FIELDS = [
-  'promptSplit', 'replyText', 'renameReplyText', 'namePrefix', 'generateTemplate', 'renameTemplate', 'inputSelector', 'sendSelector',
+  'promptSplit', 'replyText', 'retryText', 'repairTemplate', 'renameCheckTemplate', 'renameReplyText', 'namePrefix', 'generateTemplate', 'renameTemplate', 'inputSelector', 'sendSelector',
 ];
-const NUMBER_FIELDS = ['batchSize', 'promptsPerMessage', 'maxExtraReplies', 'questionIdleMs', 'turnEndIdleMs'];
-const CHECK_FIELDS = ['autoReply', 'renameAfter', 'debug'];
+const NUMBER_FIELDS = ['batchSize', 'promptsPerMessage', 'maxExtraReplies', 'questionIdleMs', 'turnEndIdleMs', 'throttleWaitMs'];
+const CHECK_FIELDS = ['autoReply', 'repairAfter', 'renameAfter', 'renameCheckAfter', 'debug'];
 const STATUS_TEXT = { running: 'Çalışıyor', paused: 'Duraklatıldı', done: 'Tamamlandı', stopped: 'Durduruldu' };
 
 const $ = (id) => document.getElementById(id);
@@ -39,7 +39,7 @@ function readForm() {
   s.batchSize = Math.max(1, s.batchSize);
   s.turnEndIdleMs = Math.max(1000, s.turnEndIdleMs);
   CHECK_FIELDS.forEach((k) => { s[k] = $(k).checked; });
-  ['promptSplit', 'replyText', 'renameReplyText', 'namePrefix', 'generateTemplate', 'renameTemplate'].forEach((k) => {
+  ['promptSplit', 'replyText', 'retryText', 'repairTemplate', 'renameCheckTemplate', 'renameReplyText', 'namePrefix', 'generateTemplate', 'renameTemplate'].forEach((k) => {
     if (!s[k].trim()) s[k] = FAA_DEFAULTS[k];
   });
   return s;
