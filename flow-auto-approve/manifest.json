@@ -1,10 +1,18 @@
 {
   "manifest_version": 3,
   "name": "Flow Oto-Onay",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Promptları Google Flow sohbetine sırayla gönderir, her partide \"Devam et\" der ve bitince görselleri sırayla adlandırtır.",
   "minimum_chrome_version": "116",
-  "permissions": ["storage", "sidePanel"],
+  "permissions": [
+    "storage",
+    "sidePanel",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://flow.google.com/*",
+    "https://labs.google/*"
+  ],
   "background": {
     "service_worker": "src/background.js"
   },
@@ -28,8 +36,14 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://labs.google/*"],
-      "js": ["src/shared.js", "src/content.js"],
+      "matches": [
+        "https://flow.google.com/*",
+        "https://labs.google/*"
+      ],
+      "js": [
+        "src/shared.js",
+        "src/content.js"
+      ],
       "run_at": "document_idle"
     }
   ]

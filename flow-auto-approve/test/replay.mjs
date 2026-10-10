@@ -43,7 +43,8 @@ const context = await playwright.chromium.launchPersistentContext(mkdtempSync(pa
 // Only the captured page itself is served; everything else (styles, fonts) is offline.
 await context.route('**/*', (route) => {
   const url = route.request().url();
-  if (url.startsWith('https://labs.google/') && route.request().resourceType() === 'document') {
+  const flowPage = /^https:\/\/(flow\.google\.com|labs\.google)\//.test(url);
+  if (flowPage && route.request().resourceType() === 'document') {
     return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: report.html });
   }
   return route.abort();
@@ -54,7 +55,7 @@ if (report.settings) {
 }
 
 const page = await context.newPage();
-await page.goto(report.url.startsWith('https://labs.google/') ? report.url : 'https://labs.google/fx/tools/flow');
+await page.goto(/^https:\/\/(flow\.google\.com|labs\.google)\//.test(report.url) ? report.url : 'https://flow.google.com/');
 await page.waitForTimeout(1500);
 const replayed = await worker.evaluate(async () => {
   for (const tab of await chrome.tabs.query({})) {

@@ -1,11 +1,11 @@
 // End-to-end test: loads the unpacked extension into Chromium, serves
-// mock-flow.html (a stand-in for Flow's agent chat) at a labs.google URL and
+// mock-flow.html (a stand-in for Flow's agent chat) at a flow.google.com URL and
 // runs whole prompt jobs against it.
 //
 //   node test/e2e.mjs            (uses a local or global `playwright` install)
 
 import { execFileSync, execSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const extDir = path.resolve(here, '..');
 const mockHtml = readFileSync(path.join(here, 'mock-flow.html'), 'utf8');
-const FLOW_URL = 'https://labs.google/fx/tools/flow/project/test';
+const FLOW_URL = 'https://flow.google.com/project/test';
 
 function loadPlaywright() {
   try {
@@ -31,9 +31,9 @@ const context = await chromium.launchPersistentContext(mkdtempSync(path.join(tmp
   headless: true,
   args: [`--disable-extensions-except=${extDir}`, `--load-extension=${extDir}`],
 });
-await context.route('https://labs.google/**', (route) =>
+await context.route(/^https:\/\/(flow\.google\.com|labs\.google)\//, (route) =>
   route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: mockHtml }));
-const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+let worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
 const extId = new URL(worker.url()).host;
 
 let failures = 0;
@@ -216,6 +216,76 @@ await jobScenario('mesaj başına 20 prompt', 'composer=textarea', { promptsPerM
   await page.close();
 }
 
+// Old Flow address still works.
+{
+  await reset();
+  const page = await context.newPage();
+  await page.goto('https://labs.google/fx/tools/flow/project/test?composer=textarea');
+  await page.waitForTimeout(1000);
+  const ok = await worker.evaluate(async () => {
+    for (const t of await chrome.tabs.query({})) {
+      if (await chrome.tabs.sendMessage(t.id, { type: 'faa:ping' }).catch(() => null)) return true;
+    }
+    return false;
+  });
+  check('labs.google adresinde de çalışıyor', ok);
+  await page.close();
+}
+
 await context.close();
+
+// A Flow tab without the content script (opened before the extension was
+// installed or updated): the side panel injects it instead of asking for a
+// reload. Simulated with a copy of the extension whose content script skips
+// flow.google.com, since a headless browser cannot install it later.
+{
+  const variant = mkdtempSync(path.join(tmpdir(), 'faa-ext-'));
+  cpSync(extDir, variant, { recursive: true, filter: (src) => !src.startsWith(path.join(extDir, 'test')) });
+  const manifest = JSON.parse(readFileSync(path.join(variant, 'manifest.json'), 'utf8'));
+  manifest.content_scripts[0].matches = ['https://labs.google/*'];
+  writeFileSync(path.join(variant, 'manifest.json'), JSON.stringify(manifest));
+
+  const ctx = await chromium.launchPersistentContext(mkdtempSync(path.join(tmpdir(), 'faa-')), {
+    channel: 'chromium',
+    headless: true,
+    args: [`--disable-extensions-except=${variant}`, `--load-extension=${variant}`],
+  });
+  await ctx.route(/^https:\/\/flow\.google\.com\//, (route) =>
+    route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: mockHtml }));
+  const w = ctx.serviceWorkers()[0] || await ctx.waitForEvent('serviceworker');
+  await w.evaluate(() => chrome.storage.local.set({
+    settings: { ...FAA_DEFAULTS, questionIdleMs: 300, turnEndIdleMs: 2000 },
+  }));
+  const page = await ctx.newPage();
+  await page.goto(`${FLOW_URL}?composer=textarea`);
+  await page.waitForTimeout(1000);
+  const panel = await ctx.newPage();
+  const panelUrl = `chrome-extension://${new URL(w.url()).host}/src/panel.html`;
+  await panel.goto(panelUrl);
+  const tabId = await panel.evaluate(async () => (await chrome.tabs.query({ url: 'https://flow.google.com/*' }))[0]?.id);
+  const before = await panel.evaluate((id) =>
+    chrome.tabs.sendMessage(id, { type: 'faa:ping' }).then(() => true, () => false), tabId);
+  check('enjeksiyon: Flow sekmesinde başta eklenti betiği yok', tabId != null && before === false);
+
+  await panel.goto(`${panelUrl}?tabId=${tabId}`);
+  await panel.fill('#prompts', makePrompts(25).join('\n\n'));
+  await panel.click('#start');
+  await panel.waitForFunction(() => document.getElementById('statusChip').textContent === 'Tamamlandı', null,
+    { timeout: 60000 }).catch(() => {});
+  const st = await mock(page);
+  check('enjeksiyon: sayfa yenilenmeden görev çalıştı',
+    (await panel.textContent('#statusChip')) === 'Tamamlandı' && kinds(st.messages) === 'GEN D RENAME E',
+    `${await panel.textContent('#error')} ${kinds(st.messages)}`);
+  checkImages('enjeksiyon', st, 25);
+
+  // Injecting again into a tab that already has the script must not break it.
+  const again = await panel.evaluate(async (id) => {
+    await chrome.scripting.executeScript({ target: { tabId: id }, files: ['src/shared.js', 'src/content.js'] });
+    return chrome.tabs.sendMessage(id, { type: 'faa:ping' }).then((r) => !!r?.ok, () => false);
+  }, tabId);
+  check('enjeksiyon: ikinci kez enjekte etmek sorunsuz', again);
+  await ctx.close();
+}
+
 console.log(failures ? `\n${failures} test başarısız` : '\nTüm testler geçti');
 process.exit(failures ? 1 : 0);

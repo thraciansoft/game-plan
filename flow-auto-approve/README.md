@@ -30,11 +30,12 @@ yazdığı mesajı göndermek için sohbet kutusunun gönder butonudur.
 3. Sağ üstten **Geliştirici modu**'nu açın.
 4. **Paketlenmemiş öğe yükle**'ye tıklayıp `flow-auto-approve` klasörünü seçin.
    Eski sürüm yüklüyse önce onu kaldırın veya ↻ ile yenileyin.
-5. Google Flow sekmesi açıksa sayfayı yenileyin (F5).
+5. Flow sekmesini yenilemeniz gerekmez. Panel ilk kullanımda eklentiyi açık
+   Flow sekmesine kendisi yükler.
 
 ## Kullanım
 
-1. Google Flow'da projenizi açın.
+1. Google Flow'da (`flow.google.com`) projenizi açın.
 2. Araç çubuğundaki eklenti ikonuna tıklayın. Sağda **yan panel** açılır ve
    sayfada çalışırken açık kalır.
 3. Promptları kutuya yazın veya yapıştırın, **her promptun arasına bir boş
@@ -112,8 +113,10 @@ ne gördüğünü kaydeder. Raporu Flow "devam edeyim mi?" diye sorarken alın.
 
 Diğer sorunlar:
 
-- **"Bu sekmede eklenti çalışmıyor":** Flow sekmesine geçin. Eklentiyi yeni
-  yüklediyseniz sayfayı yenileyin.
+- **"Etkin sekme Google Flow değil":** Panel o anda öndeki sekmeyle konuşur.
+  `flow.google.com` sekmesine geçip tekrar deneyin. Sorun sürerse o sayfayı
+  yenileyin. Eklenti `flow.google.com` ve eski adres `labs.google` üzerinde
+  çalışır.
 - **"Sohbet kutusu bulunamadı":** Gelişmiş ayarlara sohbet kutusunun CSS
   seçicisini girin. Seçiciyi Flow'da kutuya sağ tık → İncele ile bulabilirsiniz.
 - **Mesaj yazılıyor ama gitmiyor:** Gönder butonunun CSS seçicisini girin.

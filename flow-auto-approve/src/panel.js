@@ -100,12 +100,33 @@ async function targetTabId() {
   return tab?.id ?? null;
 }
 
+const FLOW_HOSTS = chrome.runtime.getManifest().host_permissions.map((p) => new URL(p.replace('*', 'x')).hostname);
+
+// Tabs that were already open when the extension was installed or updated
+// have no content script yet; inject it instead of asking for a reload.
+async function injectInto(tabId) {
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    if (!tab.url || !FLOW_HOSTS.includes(new URL(tab.url).hostname)) return false;
+    await chrome.scripting.executeScript({ target: { tabId }, files: ['src/shared.js', 'src/content.js'] });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function sendTo(tabId, msg) {
   if (tabId == null) return null;
   try {
     return await chrome.tabs.sendMessage(tabId, msg);
   } catch {
-    return null; // no content script there (not a Flow tab, or not reloaded yet)
+    // no content script there: not a Flow tab, or opened before the extension
+  }
+  if (!(await injectInto(tabId))) return null;
+  try {
+    return await chrome.tabs.sendMessage(tabId, msg);
+  } catch {
+    return null;
   }
 }
 
@@ -114,8 +135,8 @@ function showError(text) {
   $('error').textContent = text || '';
 }
 
-const NOT_FLOW = 'Bu sekmede eklenti çalışmıyor. Google Flow (labs.google) sekmesine geçin; ' +
-  'eklentiyi yeni yüklediyseniz sayfayı yenileyin.';
+const NOT_FLOW = 'Etkin sekme Google Flow değil. flow.google.com sekmesine geçip tekrar deneyin; ' +
+  'sorun sürerse o sayfayı yenileyin.';
 
 async function start() {
   showError('');

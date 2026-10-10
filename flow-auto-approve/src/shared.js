@@ -1,7 +1,9 @@
 // Shared settings and helpers. Loaded as a classic script by the content
 // script, the side panel and the service worker, so it only defines globals.
+// `var` rather than `const`: the side panel may inject this file again into a
+// tab that already ran it, and a repeated `const` declaration would throw.
 
-const FAA_DEFAULTS = {
+var FAA_DEFAULTS = {
   // Answer Flow's "continue?" questions even when no prompt job is running.
   autoReply: true,
   replyText: 'Devam et',

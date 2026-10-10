@@ -7,8 +7,17 @@
 // "continue?" questions on its own.
 
 (() => {
-  if (window.__faaLoaded) return;
-  window.__faaLoaded = true;
+  const alive = () => {
+    try {
+      return !!chrome.runtime?.id;
+    } catch {
+      return false;
+    }
+  };
+  // Injected again after an extension update: an old copy whose extension
+  // context is gone shuts itself down, so only skip when the old one still works.
+  if (window.__faaAlive?.()) return;
+  window.__faaAlive = alive;
 
   const TAG = '[Flow Oto-Onay]';
   const CLICKABLE = 'button, [role="button"], input[type="button"], input[type="submit"]';
@@ -27,7 +36,10 @@
   const TICK_MS = 500;
 
   const instanceId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const startedAt = Date.now();
+  // Chat history rendered while the page loads is not new text. When the
+  // script is injected into a page that has been open for a while, there is
+  // nothing to skip.
+  const graceUntil = performance.now() < 15000 ? Date.now() + STARTUP_GRACE_MS : 0;
   let settings = faaMergeSettings();
   let compiled = compile(settings);
   let job = null; // the job this tab runs; null when this tab owns none
@@ -48,14 +60,6 @@
   };
 
   const log = (...args) => settings.debug && console.log(TAG, ...args);
-
-  function alive() {
-    try {
-      return !!chrome.runtime?.id;
-    } catch {
-      return false;
-    }
-  }
 
   function shutdown() {
     observer?.disconnect();
@@ -349,7 +353,7 @@
     for (const m of mutations) {
       if (ownUi(m.target) || insideEditable(m.target)) continue;
       mon.lastAny = now;
-      if (now - startedAt < STARTUP_GRACE_MS) continue;
+      if (now < graceUntil) continue;
       const nodes = m.type === 'characterData' ? [m.target] : Array.from(m.addedNodes);
       for (const n of nodes) {
         if (n.nodeType === Node.ELEMENT_NODE && (ownUi(n) || n.matches(EDITABLE))) continue;
@@ -592,6 +596,7 @@
   }
 
   async function handleCommand(msg) {
+    await ready; // a freshly injected copy may get a command before its settings load
     const mine = job && job.owner === instanceId;
     switch (msg.type) {
       case 'faa:ping':
@@ -672,7 +677,7 @@
     if (changes.job && job && changes.job.newValue?.owner !== instanceId) job = null;
   });
 
-  chrome.storage.local.get('settings', (res) => {
+  const ready = chrome.storage.local.get('settings').then((res) => {
     settings = faaMergeSettings(res.settings);
     compiled = compile(settings);
     observer = new MutationObserver(onMutations);
