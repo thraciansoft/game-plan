@@ -16,19 +16,27 @@
   </header>
 
   <section>
-    <label class="field" for="prompts">
-      <span class="label">Promptlar</span>
-      <small>Her promptun arasına bir boş satır bırakın.</small>
-    </label>
-    <textarea id="prompts" rows="12" spellcheck="false"
-      placeholder="Sisli bir ormanda yürüyen kırmızı tilki&#10;&#10;Gün batımında İstanbul silüeti, yağlı boya&#10;&#10;…"></textarea>
     <div class="row between">
-      <span id="promptCount" class="muted">0 prompt</span>
+      <label class="label" for="prompts">Promptlar</label>
+      <label class="inline">Ayırma
+        <select id="promptSplit">
+          <option value="auto">Otomatik</option>
+          <option value="timecode">Zaman kodu [00:00 - 00:01]</option>
+          <option value="line">Her satır bir prompt</option>
+          <option value="blank">Boş satırla ayrılmış</option>
+        </select>
+      </label>
+    </div>
+    <textarea id="prompts" rows="12" spellcheck="false"
+      placeholder="Her satıra bir prompt yazın ya da promptları boş satırla ayırın.&#10;[00:00 - 00:01] gibi zaman kodları da tanınır."></textarea>
+    <div class="row between">
+      <strong id="promptCount">0 prompt</strong>
       <span>
-        <button id="loadFile" class="link" type="button">📄 .txt dosyasından yükle</button>
+        <button id="loadFile" class="link" type="button">📄 .txt yükle</button>
         <input id="file" type="file" accept=".txt,text/plain" hidden>
       </span>
     </div>
+    <ol id="promptPeek" class="peek"></ol>
   </section>
 
   <section>
@@ -123,6 +131,9 @@
     <p class="muted">Yer tutucular: {adet} {parti} {baslangic} {bitis} {toplam} {onek} {promptlar}</p>
     <label class="field">Tetik ifadeleri <small>(Flow'un sorusunda geçen metin, her satıra bir tane)</small>
       <textarea id="triggerPhrases" rows="5"></textarea>
+    </label>
+    <label class="field">Bitti ifadeleri <small>(Flow'un "hepsi bitti" mesajındaki kelimeler; o cümledeki sayı prompt sayısıyla eşleşmeli)</small>
+      <textarea id="donePhrases" rows="3"></textarea>
     </label>
     <div class="row">
       <label class="field">Gönder butonu metinleri

@@ -72,6 +72,7 @@
       send: words(s.sendPhrases),
       stop: words(s.stopPhrases),
       trigger: (s.triggerPhrases || []).map(faaNormalize).filter(Boolean),
+      done: words(s.donePhrases),
     };
   }
 
@@ -361,12 +362,30 @@
         if (!text || text.length > MAX_CHUNK_CHARS || !/\p{L}/u.test(text) || isEcho(text)) continue;
         mon.lastText = now;
         mon.lastNode = n;
-        mon.transcript = `${mon.transcript} ${text}`.slice(-4000);
+        mon.transcript = `${mon.transcript} ${text}`.slice(-20000);
       }
     }
   }
 
   const agentAsked = () => !!mon.transcript && hasTrigger(mon.transcript.slice(-600));
+
+  // Flow says the step is finished ("Listedeki 144 sahnenin tamamı …
+  // oluşturuldu"). Only the sentence with the last such word counts, and a
+  // number in it that does not match ("84 sahnenin tamamı" when 144 prompts
+  // were sent) means Flow stopped early.
+  function saysFinished(step) {
+    const said = mon.transcript;
+    let at = -1;
+    for (const re of compiled.done) {
+      for (const m of said.matchAll(new RegExp(re.source, 'gu'))) at = Math.max(at, m.index);
+    }
+    if (at < 0) return false;
+    const start = Math.max(...['.', '!', '?'].map((c) => said.lastIndexOf(c, at))) + 1;
+    const ends = ['.', '!', '?'].map((c) => said.indexOf(c, at)).filter((i) => i >= 0);
+    const sentence = said.slice(start, ends.length ? Math.min(...ends) : said.length);
+    const numbers = (sentence.match(/\d+/g) || []).map(Number);
+    return !numbers.length || (step.counts || []).some((n) => numbers.includes(n));
+  }
 
   // ------------------------------------------------------------------ job
 
@@ -416,7 +435,7 @@
 
   async function jobReply(step, reason) {
     if (job.replies >= step.expected + settings.maxExtraReplies) {
-      return pauseJob('Flow beklenenden çok onay istedi; kontrol edip Sürdür\'e basın.');
+      return pauseJob('Flow beklenenden çok durdu ya da tüm promptların bittiğini söylemedi. Flow\'u kontrol edip Sürdür veya Sonraki adım\'a basın.');
     }
     const text = step.kind === 'rename' ? settings.renameReplyText : settings.replyText;
     if (!(await send(text))) return sendFailed();
@@ -460,10 +479,11 @@
     const textIdle = now - Math.max(mon.lastText, mon.markAt);
     if (agentAsked() && textIdle >= settings.questionIdleMs) return jobReply(step, 'soru algılandı');
     if (now - mon.lastAny < settings.turnEndIdleMs) return;
-    // Flow stopped without a recognizable question. If it has not yet asked
-    // as often as the batch size implies, it is most likely waiting for us.
-    if (job.replies < step.expected) return jobReply(step, 'Flow durdu, partiler bitmedi');
-    return nextStep('Flow durdu');
+    // Flow went quiet without a question we know. Move on only when it said
+    // the whole step is done; otherwise it stopped early or is waiting in
+    // other words, so nudge it on (jobReply pauses if this keeps happening).
+    if (saysFinished(step)) return nextStep('Flow bitirdiğini söyledi');
+    return jobReply(step, 'Flow durdu ama hepsinin bittiğini söylemedi');
   }
 
   async function standaloneTick() {

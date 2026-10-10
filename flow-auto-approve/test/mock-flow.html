@@ -38,6 +38,10 @@
   const STOP_BUTTON = params.get('stop') !== '0';
   const ASK_AT_END = params.get('askAtEnd') === '1';
   const ODD = params.get('odd') === '1'; // questions the extension's phrase list does not know
+  // Like the real Flow agent: runs every batch itself without asking, then
+  // reports "Listedeki N sahnenin tamamı … oluşturuldu".
+  const SELF = params.get('self') === '1';
+  let stopEarlyAt = Number(params.get('stopEarlyAt') || 0); // claims to be done after this many, once
   const BATCH = Number(params.get('batch') || 20);
   const STEP_MS = Number(params.get('stepMs') || 30);
 
@@ -75,7 +79,54 @@
     setBusy(false);
   }
 
+  async function runGenerationSelf() {
+    setBusy(true);
+    while (state.queue.length) {
+      const from = state.images.length + 1;
+      const to = Math.min(from + BATCH - 1, from + state.queue.length - 1);
+      await agentSay(from === 1 ? `İlk ${to} sahne için görselleri oluşturuyorum.`
+        : `Sıradaki ${to - from + 1} sahne (${from} - ${to}) için görselleri oluşturuyorum.`);
+      setBusy(true);
+      for (let n = from; n <= to; n++) {
+        const p = state.queue.shift();
+        const fig = document.createElement('figure');
+        fig.textContent = `#${p.n}`;
+        grid.appendChild(fig);
+        state.images.push({ n: p.n, prompt: p.text, name: '', el: fig });
+        progress.textContent = `${n - from + 1}/${to - from + 1}`;
+        await sleep(STEP_MS);
+      }
+      if (stopEarlyAt && state.images.length >= stopEarlyAt) {
+        stopEarlyAt = 0;
+        break;
+      }
+    }
+    progress.textContent = '';
+    state.phase = state.queue.length ? 'gen' : 'idle';
+    await agentSay(`Listedeki ${state.images.length} sahnenin tamamı sırasıyla ve 20'şerli gruplar halinde oluşturuldu.`);
+  }
+
+  async function runRenameSelf() {
+    setBusy(true);
+    const todo = state.images.filter((im) => !im.name).sort((a, b) => a.n - b.n);
+    for (let i = 0; i < todo.length; i += BATCH) {
+      await agentSay(i ? `${i + 1}'den ${Math.min(i + BATCH, todo.length)}'e kadar olan görselleri yeniden adlandırıyorum.`
+        : `İlk ${Math.min(BATCH, todo.length)} görseli yeniden adlandırıyorum.`);
+      setBusy(true);
+      for (const im of todo.slice(i, i + BATCH)) {
+        im.name = `${state.renamePrefix}${im.n}`;
+        im.el.textContent = im.name;
+        await sleep(STEP_MS);
+      }
+    }
+    state.phase = 'idle';
+    const n = state.images.length;
+    await agentSay(`Oluşturulan ${n} görselin tamamı 20'şerli partiler halinde sırasıyla ` +
+      `${state.renamePrefix}1'den ${state.renamePrefix}${n}'e kadar yeniden adlandırıldı.`);
+  }
+
   async function runGeneration() {
+    if (SELF) return runGenerationSelf();
     setBusy(true);
     let made = 0;
     while (state.queue.length && made < BATCH) {
@@ -102,6 +153,7 @@
   }
 
   async function runRename() {
+    if (SELF) return runRenameSelf();
     setBusy(true);
     let done = 0;
     const todo = state.images.filter((im) => !im.name).sort((a, b) => a.n - b.n);
@@ -188,6 +240,40 @@
       stop.style.display = STOP_BUTTON && state.busy ? '' : 'none';
     };
     composer.append(ta, send, stop);
+  } else if (COMPOSER === 'pm') {
+    // Like Flow's prompt box: a ProseMirror editor and an "Oluşturmaya başla"
+    // (arrow_forward) button that is disabled while the box is empty.
+    const pm = document.createElement('div');
+    pm.className = 'ProseMirror';
+    pm.contentEditable = 'true';
+    const send = document.createElement('button');
+    send.className = 'mdc-icon-button generate-icon-button';
+    send.setAttribute('aria-label', 'Oluşturmaya başla');
+    send.innerHTML = '<i class="icon">arrow_forward</i>';
+    const text = () => Array.from(pm.querySelectorAll('p')).map((p) => p.textContent).join('\n') || pm.textContent;
+    pm.addEventListener('paste', (e) => {
+      e.preventDefault();
+      pm.textContent = '';
+      for (const line of e.clipboardData.getData('text/plain').split('\n')) {
+        const p = document.createElement('p');
+        p.textContent = line;
+        pm.appendChild(p);
+      }
+      refreshComposer();
+    });
+    pm.addEventListener('input', () => refreshComposer());
+    send.addEventListener('click', () => {
+      if (send.disabled) return;
+      const t = text();
+      pm.textContent = '';
+      refreshComposer();
+      onUserMessage(t);
+    });
+    refreshComposer = () => {
+      send.disabled = state.busy || !text().trim();
+      stop.style.display = STOP_BUTTON && state.busy ? '' : 'none';
+    };
+    composer.append(pm, send, stop);
   } else {
     // A rich-text editor: handles paste itself, one <p> per line, Enter sends.
     const ce = document.createElement('div');

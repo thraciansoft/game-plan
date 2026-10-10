@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Flow Oto-Onay",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "Promptları Google Flow sohbetine sırayla gönderir, her partide \"Devam et\" der ve bitince görselleri sırayla adlandırtır.",
   "minimum_chrome_version": "116",
   "permissions": [

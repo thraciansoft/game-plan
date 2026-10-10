@@ -10,6 +10,7 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import vm from 'node:vm';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const extDir = path.resolve(here, '..');
@@ -50,6 +51,33 @@ async function reset(patch = {}) {
 }
 
 const makePrompts = (n) => Array.from({ length: n }, (_, i) => `kırmızı tilki, sahne ${i + 1}, sinematik ışık`);
+const pad = (n) => String(n).padStart(2, '0');
+// Timecoded prompts, one per line, like "[00:04 - 00:07] -> …, 16:9 --ar 16:9".
+const makeTimecoded = (n) => Array.from({ length: n }, (_, i) =>
+  `[${pad(Math.floor(i / 60))}:${pad(i % 60)} - ${pad(Math.floor((i + 1) / 60))}:${pad((i + 1) % 60)}] -> ` +
+  `minimalist vector style, scene ${i + 1}, misty kingdom, 16:9 aspect ratio --ar 16:9`);
+
+// Prompt splitting (pure function, no browser needed).
+{
+  const shared = vm.createContext({});
+  vm.runInContext(readFileSync(path.join(extDir, 'src/shared.js'), 'utf8'), shared);
+  const split = (text, mode) => vm.runInContext('(t, m) => faaSplitPrompts(t, m)', shared)(text, mode);
+  const timed = makeTimecoded(144);
+  const a = split(timed.join('\n'));
+  check('ayırma: satır satır zaman kodlu 144 prompt', a.prompts.length === 144 && a.mode === 'timecode' &&
+    a.prompts[143].startsWith('[02:23 - 02:24]'), `${a.prompts.length} ${a.mode}`);
+  const b = split(timed.join(' '));
+  check('ayırma: aynı satırda zaman kodlu 144 prompt', b.prompts.length === 144, String(b.prompts.length));
+  const c = split(timed.join('\r\n\u00a0\r\n'));
+  check('ayırma: Windows satır sonu + görünmez boşluklu boş satır', c.prompts.length === 144, String(c.prompts.length));
+  const d = split('bir\niki satırlı prompt\n\nüç\n\ndört');
+  check('ayırma: boş satırla ayrılmış, çok satırlı prompt bir arada', d.mode === 'blank' &&
+    JSON.stringify(d.prompts) === JSON.stringify(['bir iki satırlı prompt', 'üç', 'dört']), JSON.stringify(d.prompts));
+  const e = split('kedi\nköpek\nkuş');
+  check('ayırma: boş satır yoksa her satır bir prompt', e.mode === 'line' && e.prompts.length === 3);
+  const f = split('kedi\nköpek', 'blank');
+  check('ayırma: elle "boş satır" seçilince tek prompt', f.prompts.length === 1);
+}
 
 async function openFlow(query) {
   const page = await context.newPage();
@@ -123,6 +151,11 @@ await jobScenario('zengin editör + Enter, durdur butonu yok, sonda da soruyor',
   'composer=ce&stop=0&askAtEnd=1', {}, 'GEN D D D RENAME E E');
 await jobScenario('tanınmayan soru cümlesi (tur sonu kuralı)', 'composer=textarea&odd=1', {}, 'GEN D D RENAME E E');
 await jobScenario('mesaj başına 20 prompt', 'composer=textarea', { promptsPerMessage: 20 }, 'GEN GEN GEN RENAME E E');
+// The real Flow: never asks, runs every batch itself and ends with
+// "Listedeki 45 sahnenin tamamı … oluşturuldu" (ProseMirror box, arrow_forward button).
+await jobScenario('gerçek Flow gibi: sormadan kendi partiliyor', 'composer=pm&self=1', {}, 'GEN RENAME');
+// Flow claims "the 40 scenes are all done" with 45 prompts: not finished, so "Devam et".
+await jobScenario('Flow eksik bitirip "tamamı" diyor', 'composer=pm&self=1&stopEarlyAt=40', {}, 'GEN D RENAME');
 
 // Without a job: answers "Devam edeyim mi?" on its own, but only when enabled.
 {
@@ -159,6 +192,12 @@ await jobScenario('mesaj başına 20 prompt', 'composer=textarea', { promptsPerM
   await panel.fill('#prompts', text);
   const count = await panel.textContent('#promptCount');
   check('panel: promptlar boş satırdan ayrıldı', count.startsWith('45 prompt'), count);
+  await panel.fill('#prompts', makeTimecoded(144).join('\n'));
+  const timedCount = await panel.textContent('#promptCount');
+  const lastPeek = await panel.textContent('#promptPeek li:last-child');
+  check('panel: zaman kodlu promptlar ayrıldı ve önizlendi', timedCount.startsWith('144 prompt') &&
+    timedCount.includes('zaman kodlarından') && lastPeek.startsWith('144.[02:23'), `${timedCount} | ${lastPeek.slice(0, 30)}`);
+  await panel.fill('#prompts', text);
   await panel.click('#start');
 
   await page.waitForFunction(() => mockState.messages.length >= 2, null, { timeout: 30000 });

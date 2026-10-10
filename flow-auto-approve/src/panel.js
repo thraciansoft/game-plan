@@ -1,6 +1,6 @@
-const LIST_FIELDS = ['triggerPhrases', 'sendPhrases', 'stopPhrases'];
+const LIST_FIELDS = ['triggerPhrases', 'donePhrases', 'sendPhrases', 'stopPhrases'];
 const TEXT_FIELDS = [
-  'replyText', 'renameReplyText', 'namePrefix', 'generateTemplate', 'renameTemplate', 'inputSelector', 'sendSelector',
+  'promptSplit', 'replyText', 'renameReplyText', 'namePrefix', 'generateTemplate', 'renameTemplate', 'inputSelector', 'sendSelector',
 ];
 const NUMBER_FIELDS = ['batchSize', 'promptsPerMessage', 'maxExtraReplies', 'questionIdleMs', 'turnEndIdleMs'];
 const CHECK_FIELDS = ['autoReply', 'renameAfter', 'debug'];
@@ -39,7 +39,7 @@ function readForm() {
   s.batchSize = Math.max(1, s.batchSize);
   s.turnEndIdleMs = Math.max(1000, s.turnEndIdleMs);
   CHECK_FIELDS.forEach((k) => { s[k] = $(k).checked; });
-  ['replyText', 'renameReplyText', 'namePrefix', 'generateTemplate', 'renameTemplate'].forEach((k) => {
+  ['promptSplit', 'replyText', 'renameReplyText', 'namePrefix', 'generateTemplate', 'renameTemplate'].forEach((k) => {
     if (!s[k].trim()) s[k] = FAA_DEFAULTS[k];
   });
   return s;
@@ -55,21 +55,39 @@ async function saveSettings() {
 
 // --------------------------------------------------------------- prompts
 
+const SPLIT_TEXT = { timecode: 'zaman kodlarından', line: 'satırlardan', blank: 'boş satırlardan' };
+
 function currentPrompts() {
-  return faaParsePrompts($('prompts').value);
+  return faaParsePrompts($('prompts').value, $('promptSplit').value);
 }
 
 function renderPromptInfo() {
-  const prompts = currentPrompts();
+  const { prompts, mode } = faaSplitPrompts($('prompts').value, $('promptSplit').value);
   const s = readForm();
-  const lines = $('prompts').value.split('\n').filter((l) => l.trim()).length;
   let info = `${prompts.length} prompt`;
   if (prompts.length) {
     const batches = Math.ceil(prompts.length / s.batchSize);
     info += ` · ${batches} parti × ${s.batchSize}`;
+    if (prompts.length > 1) info += ` · ${SPLIT_TEXT[mode]} ayrıldı`;
   }
-  if (prompts.length === 1 && lines > 1) info += ' (promptların arasına boş satır koydunuz mu?)';
   $('promptCount').textContent = info;
+  // First and last prompt, so a wrong split is obvious before starting.
+  const peek = $('promptPeek');
+  peek.textContent = '';
+  const shown = prompts.length > 3 ? [0, 1, -1, prompts.length - 1] : prompts.map((_, i) => i);
+  shown.forEach((i) => {
+    const li = document.createElement('li');
+    if (i < 0) {
+      li.textContent = '…';
+    } else {
+      const num = document.createElement('span');
+      num.className = 'num';
+      num.textContent = `${i + 1}.`;
+      li.append(num, document.createTextNode(prompts[i]));
+      li.title = prompts[i];
+    }
+    peek.append(li);
+  });
   $('nameExample').textContent = `${s.namePrefix}1, ${s.namePrefix}2…`;
   $('replyEcho').textContent = s.replyText;
 
@@ -180,6 +198,12 @@ async function fetchReport(full) {
   if (!res?.ok) {
     showError(NOT_FLOW);
     return null;
+  }
+  // The job as stored, which outlives the tab that ran it (step texts left out).
+  const { job: stored } = await chrome.storage.local.get('job');
+  if (stored) {
+    const { steps, ...rest } = stored;
+    res.report.storedJob = { ...rest, steps: steps.map(({ text, ...step }) => ({ ...step, chars: text.length })) };
   }
   return res.report;
 }
@@ -307,7 +331,7 @@ async function init() {
     renderPromptInfo();
     saveDraft();
   });
-  document.querySelectorAll('input:not(#file), textarea:not(#prompts)').forEach((el) => {
+  document.querySelectorAll('input:not(#file), textarea:not(#prompts), select').forEach((el) => {
     el.addEventListener('input', () => {
       renderPromptInfo();
       clearTimeout(saveTimer);

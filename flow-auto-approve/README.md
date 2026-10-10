@@ -10,8 +10,10 @@ prompt sırasına göre `gorsel1`, `gorsel2`… diye adlandırtır.
 
 1. Eklenti sohbete numaralı 120 promptu tek mesajda gönderir ve görsellerin
    **20'şer** oluşturulmasını ister.
-2. Flow her 20 görselde bir "Devam edeyim mi?" diye sorar. Eklenti sohbete
-   **Devam et** yazar. Bu adımda Flow 5 kez sorar.
+2. Flow her 20 görselde bir "Devam edeyim mi?" diye sorarsa eklenti sohbete
+   **Devam et** yazar. Flow sormadan partileri kendisi sürdürürse eklenti
+   karışmaz. Flow "120 sahnenin tamamı oluşturuldu" dediğinde sıradaki adıma
+   geçer.
 3. 120 görsel bitince eklenti şu mesajı gönderir: *"1. prompttan oluşan
    görselin adı gorsel1, 2. prompttan oluşanın adı gorsel2 olsun … son görsel
    gorsel120"*.
@@ -38,19 +40,18 @@ yazdığı mesajı göndermek için sohbet kutusunun gönder butonudur.
 1. Google Flow'da (`flow.google.com`) projenizi açın.
 2. Araç çubuğundaki eklenti ikonuna tıklayın. Sağda **yan panel** açılır ve
    sayfada çalışırken açık kalır.
-3. Promptları kutuya yazın veya yapıştırın, **her promptun arasına bir boş
-   satır** bırakın:
+3. Promptları kutuya yapıştırın. İsterseniz bir `.txt` dosyasını
+   **📄 .txt yükle** ile de açabilirsiniz. **Ayırma: Otomatik**
+   şu biçimleri tanır:
 
-   ```
-   Sisli bir ormanda yürüyen kırmızı tilki
+   - **Zaman kodlu:** Her prompt `[00:00 - 00:01] -> …` gibi bir zaman koduyla
+     başlar. Promptlar ayrı satırlarda ya da aynı satırda olabilir.
+   - **Boş satırla ayrılmış:** Bir prompt birden fazla satır olabilir.
+   - **Her satır bir prompt.**
 
-   Gün batımında İstanbul silüeti, yağlı boya
-
-   Kar altında eski bir tren istasyonu
-   ```
-
-   İsterseniz aynı biçimdeki bir `.txt` dosyasını **📄 .txt dosyasından yükle**
-   ile açabilirsiniz. Kutunun altında kaç prompt algılandığını görürsünüz.
+   Kutunun altında kaç prompt algılandığını, ilk iki ve son promptu görürsünüz.
+   **Başlatmadan önce bu sayıyı kontrol edin.** Yanlışsa **Ayırma** menüsünden
+   biçimi elle seçin.
 4. **Parti büyüklüğü** (20) ve **İsim öneki** (`gorsel`) değerlerini kontrol edin.
 5. **▶ Başlat**'a basın. İlerlemeyi ve yapılan her adımı panelde görürsünüz.
 
@@ -69,15 +70,20 @@ mesajları göndermeden önce görebilirsiniz.
 - **Soru algılama:** Flow'un son mesajında "devam edeyim mi",
   "isimlendireyim mi", "continue?" gibi bir ifade varsa ve mesaj 3 saniyedir
   değişmiyorsa eklenti cevap yazar.
-- **Tur sonu kuralı:** Flow tanınmayan bir cümleyle durursa eklenti sayfanın
-  tamamen sakinleşmesini bekler (varsayılan 30 sn). Sonra şöyle karar verir:
-  - Parti sayısına göre beklenen onaylar henüz verilmediyse **Devam et** yazar.
-    120 prompt için bu 5 onaydır.
-  - Beklenen onaylar verildiyse adımı bitmiş sayar ve sonrakine geçer.
+- **Tur sonu kuralı:** Flow soru sormadan durursa eklenti sayfanın tamamen
+  sakinleşmesini bekler (varsayılan 30 sn). Sonra Flow'un son "bitti"
+  cümlesine bakar:
+  - Cümlede "tamamı", "tüm", "hepsi", "tamamlandı" gibi bir kelime varsa ve
+    cümledeki sayı prompt sayısıyla eşleşiyorsa adım bitmiş sayılır ve
+    sonrakine geçilir. Örnek: "Listedeki 120 sahnenin tamamı oluşturuldu."
+  - Sayı eşleşmiyorsa Flow erken durmuş demektir ve eklenti **Devam et** yazar.
+    Örnek: 120 prompt için "84 sahnenin tamamı".
+  - Hiç "bitti" cümlesi yoksa da **Devam et** yazar.
 - **Flow meşgulken:** Sohbet kutusunun yanında "Durdur/Stop" butonu
   görünüyorsa Flow hâlâ çalışıyor demektir. Eklenti bu sırada bir şey yazmaz.
-- **Güvenlik sınırı:** Flow beklenenden 5 kez fazla onay isterse görev
-  duraklatılır. Böylece sonsuz döngü ve gereksiz kredi harcaması olmaz.
+- **Güvenlik sınırı:** Eklenti bir adımda beklenenden 5 kez fazla
+  **Devam et** yazmak zorunda kalırsa görevi duraklatır ve panelde uyarır.
+  Böylece sonsuz döngü ve gereksiz kredi harcaması olmaz.
 
 Görev yokken de (ör. Flow'a kendiniz yazdığınızda) eklenti "Devam edeyim mi?"
 sorularına **Devam et** yazar. Bunu paneldeki onay kutusundan kapatabilirsiniz.
@@ -92,6 +98,7 @@ sorularına **Devam et** yazar. Bunu paneldeki onay kutusundan kapatabilirsiniz.
 | Tur bitti sayma | Tur sonu kuralı için sayfanın ne kadar süre sakin kalması gerektiği. Flow partiler arasında uzun süre hiçbir şey göstermiyorsa artırın. |
 | Mesaj şablonları | Flow'a giden üretim ve isimlendirme mesajlarının metni. Yer tutucular: `{adet}` `{parti}` `{baslangic}` `{bitis}` `{toplam}` `{onek}` `{promptlar}`. |
 | Tetik ifadeleri | Flow'un sorusunda geçen ve "onay bekliyorum" anlamına gelen metinler. |
+| Bitti ifadeleri | Flow'un "hepsi bitti" cümlesindeki kelimeler. O cümledeki sayı prompt sayısıyla eşleşmelidir. |
 | CSS seçiciler | Eklenti sohbet kutusunu veya gönder butonunu bulamazsa doğrudan seçici girin. |
 
 ## Sorun giderme

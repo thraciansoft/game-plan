@@ -12,6 +12,9 @@ var FAA_DEFAULTS = {
   batchSize: 20,
   // 0 = send every prompt in one message; otherwise split into messages of this size.
   promptsPerMessage: 0,
+  // How the prompt box is split: 'auto', 'blank' (blank lines), 'line' (every
+  // line) or 'timecode' (each "[00:00 - 00:01]" starts a prompt).
+  promptSplit: 'auto',
   renameAfter: true,
   namePrefix: 'gorsel',
   // Placeholders: {adet} prompts in this message, {parti} batch size,
@@ -35,6 +38,12 @@ var FAA_DEFAULTS = {
     'do you want me to continue', 'want to continue', 'like to continue', 'continue?',
     'keep going?', 'proceed?', 'should i rename', 'continue renaming', 'continue naming',
     'your approval', 'approval needed', 'approval required',
+  ],
+  // Words in Flow's message that say the whole step is finished (whole words).
+  // Only trusted when the message has no number or mentions the step's count.
+  donePhrases: [
+    'tamamı', 'tümü', 'tüm', 'hepsi', 'tamamlandı', 'tamamlanmıştır', 'bitti', 'hazır', 'kalmadı',
+    'all', 'complete', 'completed', 'finished', 'done', 'ready', 'nothing left',
   ],
   // Wait this long after the agent's question stops changing before answering.
   questionIdleMs: 3000,
@@ -76,13 +85,43 @@ function faaWordRegExp(phrase) {
   return new RegExp(`(?<![\\p{L}\\p{N}])${faaEscapeRegExp(p)}(?![\\p{L}\\p{N}])`, 'u');
 }
 
-// Prompts are separated by blank lines; line breaks inside a prompt are kept
-// as spaces.
-function faaParsePrompts(text) {
-  return String(text || '')
-    .split(/\n[ \t]*\n/)
-    .map((p) => p.replace(/\s+/g, ' ').trim())
-    .filter(Boolean);
+// A timecode such as "[00:00 - 00:01]" or "[1:02:03.5–1:02:07]".
+var FAA_TIMECODE_SOURCE =
+  '\\[\\s*\\d{1,2}:\\d{2}(?::\\d{2})?(?:[.,]\\d+)?\\s*[-–—]\\s*\\d{1,2}:\\d{2}(?::\\d{2})?(?:[.,]\\d+)?\\s*\\]';
+
+// Splits the prompt box into prompts; whitespace inside a prompt becomes single
+// spaces. 'auto' prefers timecodes, then blank lines, then one prompt per line.
+function faaSplitPrompts(text, mode = 'auto') {
+  const src = String(text || '')
+    .replace(/\r\n?|[\u2028\u2029]/g, '\n')
+    .replace(/[\u00a0\u2000-\u200b\u202f\u205f\u3000\ufeff]/g, ' ');
+  const clean = (list) => list.map((p) => p.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  const byBlank = () => clean(src.split(/\n[ \t]*\n/));
+  const byLine = () => clean(src.split('\n'));
+  const byTimecode = () => {
+    const starts = Array.from(src.matchAll(new RegExp(FAA_TIMECODE_SOURCE, 'g')), (m) => m.index);
+    if (starts.length < 2) return null;
+    // Text before the first timecode stays with the first prompt.
+    const cuts = [0, ...starts.slice(1), src.length];
+    return clean(cuts.slice(0, -1).map((from, i) => src.slice(from, cuts[i + 1])));
+  };
+  let prompts;
+  let used = mode;
+  if (mode === 'blank') prompts = byBlank();
+  else if (mode === 'line') prompts = byLine();
+  else if (mode === 'timecode') prompts = byTimecode() || clean([src]);
+  else {
+    const blank = byBlank();
+    const timed = byTimecode();
+    if (timed && timed.length >= blank.length) [prompts, used] = [timed, 'timecode'];
+    else if (blank.length > 1) [prompts, used] = [blank, 'blank'];
+    else [prompts, used] = [byLine(), 'line'];
+  }
+  return { prompts, mode: used };
+}
+
+function faaParsePrompts(text, mode = 'auto') {
+  return faaSplitPrompts(text, mode).prompts;
 }
 
 function faaFill(template, vars) {
@@ -90,7 +129,8 @@ function faaFill(template, vars) {
 }
 
 // Turns the prompt list into the chat messages the job sends, one per step.
-// `expected` is how many times Flow should ask "continue?" during the step.
+// `expected` is how many times Flow should ask "continue?" during the step;
+// `counts` are the numbers Flow may quote when it says the step is finished.
 function faaBuildSteps(prompts, s) {
   const batch = Math.max(1, Number(s.batchSize) || 1);
   const per = s.promptsPerMessage > 0 ? s.promptsPerMessage : prompts.length;
@@ -108,6 +148,7 @@ function faaBuildSteps(prompts, s) {
         promptlar: chunk.map((p, j) => `${start + j}. ${p}`).join('\n\n'),
       }),
       expected: Math.ceil(chunk.length / batch) - 1,
+      counts: [chunk.length, end, total],
     });
   }
   if (s.renameAfter && total) {
@@ -118,6 +159,7 @@ function faaBuildSteps(prompts, s) {
         adet: total, parti: batch, baslangic: 1, bitis: total, toplam: total, onek: s.namePrefix, promptlar: '',
       }),
       expected: Math.ceil(total / batch) - 1,
+      counts: [total],
     });
   }
   return steps;
