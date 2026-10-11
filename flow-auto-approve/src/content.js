@@ -376,16 +376,30 @@
   // oluşturuldu"). Only the sentence with the last such word counts, and a
   // number in it that does not match ("84 sahnenin tamamı" when 144 prompts
   // were sent) means Flow stopped early.
-  function saysFinished(step) {
-    const said = mon.transcript;
-    let at = -1;
-    for (const re of compiled.done) {
-      for (const m of said.matchAll(new RegExp(re.source, 'gu'))) at = Math.max(at, m.index);
+  // Flow's own sentences since our last message: prompt texts it echoes back
+  // ("Tümünü göster") are dropped, so words inside a prompt never count.
+  let echoCache = { id: null, text: '' };
+  function agentSentences() {
+    if (job && echoCache.id !== job.id) {
+      echoCache = { id: job.id, text: faaNormalize(job.steps.map((st) => st.text).join(' ')) };
     }
-    if (at < 0) return false;
-    const start = Math.max(...['.', '!', '?'].map((c) => said.lastIndexOf(c, at))) + 1;
-    const ends = ['.', '!', '?'].map((c) => said.indexOf(c, at)).filter((i) => i >= 0);
-    const sentence = said.slice(start, ends.length ? Math.min(...ends) : said.length);
+    const echo = job ? echoCache.text : mon.echo;
+    return mon.transcript.split(/(?<=[.!?])\s+/).map((x) => x.trim())
+      .filter((x) => x && !(x.length >= 8 && echo.includes(x.replace(/^\d+\.\s*/, ''))));
+  }
+
+  // Flow ended its turn with a question we have no phrase for
+  // ("…geçmemi ister misiniz?").
+  function endsWithQuestion() {
+    return agentSentences().slice(-3).some((x) => x.endsWith('?'));
+  }
+
+  function saysFinished(step) {
+    // The sentence holding the last "done" word ("Listedeki 144 sahnenin
+    // tamamı … oluşturuldu"); a number in it that does not match the step's
+    // count ("84 sahnenin tamamı" for 144 prompts) means Flow stopped early.
+    const sentence = agentSentences().reverse().find((x) => compiled.done.some((re) => re.test(x)));
+    if (!sentence) return false;
     const numbers = (sentence.match(/\d+/g) || []).map(Number);
     return !numbers.length || (step.counts || []).some((n) => numbers.includes(n));
   }
@@ -485,11 +499,16 @@
     // After errors or rate limiting, give Flow's quota time to recover before
     // asking it to retry.
     if (step.kind !== 'rename' && step.kind !== 'renamecheck' && flowFailed() && now - mon.lastAny < settings.throttleWaitMs) return;
-    if (agentAsked() && textIdle >= settings.questionIdleMs) return jobReply(step, 'soru algılandı');
+    if (agentAsked() && textIdle >= settings.questionIdleMs) {
+      // "Tüm 144 görsel oluşturuldu. Başka bir şey ister misiniz?" is the end, not a batch question.
+      if (saysFinished(step)) return nextStep('Flow bitirdiğini söyledi');
+      return jobReply(step, 'soru algılandı');
+    }
     if (now - mon.lastAny < settings.turnEndIdleMs) return;
     // Flow went quiet without a question we know. Move on only when it said
     // the whole step is done; otherwise it stopped early or is waiting in
     // other words, so nudge it on (jobReply pauses if this keeps happening).
+    if (endsWithQuestion()) return jobReply(step, 'Flow soru sordu');
     if (saysFinished(step)) return nextStep('Flow bitirdiğini söyledi');
     return jobReply(step, 'Flow durdu ama hepsinin bittiğini söylemedi');
   }

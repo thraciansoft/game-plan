@@ -52,6 +52,8 @@ var FAA_DEFAULTS = {
     'devam etmeli miyim', 'devam edilsin mi', 'devam?',
     'isimlendireyim mi', 'isimlendirmeye devam', 'adlandırayım mı', 'adlandırmaya devam',
     'onaylıyor musun', 'onay ver', 'onayınız', 'onayın', 'onay gerek',
+    'ister misiniz', 'ister misin', 'geçmemi', 'geçeyim mi', 'geçelim mi', 'onay verebilirsiniz',
+    'onaylayabilirsiniz', 'nasıl ilerleyelim', 'ne dersiniz',
     'should i continue', 'shall i continue', 'would you like me to continue',
     'do you want me to continue', 'want to continue', 'like to continue', 'continue?',
     'keep going?', 'proceed?', 'should i rename', 'continue renaming', 'continue naming',

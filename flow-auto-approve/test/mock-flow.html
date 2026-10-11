@@ -41,6 +41,9 @@
   // Like the real Flow agent: runs every batch itself without asking, then
   // reports "Listedeki N sahnenin tamamı … oluşturuldu".
   const SELF = params.get('self') === '1';
+  // Like the third real run: asks "…geçmemi ister misiniz?" and echoes each
+  // batch's prompt texts back into the chat ("Tümünü göster").
+  const REAL3 = params.get('real3') === '1';
   let stopEarlyAt = Number(params.get('stopEarlyAt') || 0); // claims to be done after this many, once
   // These prompts fail on the first try, like Flow's rate limit (THROTTLED) errors.
   const FAIL_FIRST = new Set((params.get('failFirst') || '').split(',').filter(Boolean).map(Number));
@@ -154,6 +157,18 @@
       await sleep(STEP_MS);
     }
     progress.textContent = '';
+    if (REAL3) {
+      const done = state.images.slice(-made);
+      bubble(done.map((im) => `${im.n}. ${im.prompt}`).join('\n'), 'agent');
+      if (state.queue.length) {
+        state.phase = 'gen';
+        const a = state.images.length + 1;
+        return agentSay(`Parti (${a - made}-${a - 1} arası promptlar) başarıyla oluşturuldu. ` +
+          `Sıradaki partiye (${a}-${Math.min(a + BATCH - 1, a + state.queue.length - 1)}) geçmemi ister misiniz?`);
+      }
+      state.phase = 'idle';
+      return agentSay(`Tüm ${state.images.length} görsel oluşturuldu. Başka bir şey ister misiniz?`);
+    }
     if (failedNow.length) {
       state.phase = 'gen';
       return agentSay(`Bu partide ${failedNow.join(', ')} numaralı promptlar istek limiti ` +

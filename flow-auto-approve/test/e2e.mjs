@@ -134,10 +134,10 @@ function checkImages(name, st, n) {
     st.images.filter((im) => im.name !== `gorsel${im.n}`).slice(0, 3).map((im) => `${im.n}:${im.name}`).join(' '));
 }
 
-async function jobScenario(name, query, patch, expectedKinds, n = 45) {
+async function jobScenario(name, query, patch, expectedKinds, n = 45, prompts = makePrompts(n)) {
   await reset(patch);
   const { page, tabId } = await openFlow(query);
-  const res = await startJob(tabId, makePrompts(n));
+  const res = await startJob(tabId, prompts);
   const job = await waitJob('done');
   await page.waitForTimeout(300);
   const st = await mock(page);
@@ -151,7 +151,7 @@ async function jobScenario(name, query, patch, expectedKinds, n = 45) {
 // step with two "Evet, devam et".
 await jobScenario('textarea + durdur butonu', 'composer=textarea', {}, 'GEN D D KONTROL RENAME E E ADKONTROL');
 await jobScenario('zengin editör + Enter, durdur butonu yok, sonda da soruyor',
-  'composer=ce&stop=0&askAtEnd=1', {}, 'GEN D D D KONTROL RENAME E E ADKONTROL');
+  'composer=ce&stop=0&askAtEnd=1', {}, 'GEN D D KONTROL RENAME E E ADKONTROL');
 await jobScenario('tanınmayan soru cümlesi (tur sonu kuralı)', 'composer=textarea&odd=1', {}, 'GEN D D KONTROL RENAME E E ADKONTROL');
 await jobScenario('mesaj başına 20 prompt', 'composer=textarea', { promptsPerMessage: 20 }, 'GEN GEN GEN KONTROL RENAME E E ADKONTROL');
 // The real Flow: never asks, runs every batch itself and ends with
@@ -161,6 +161,11 @@ await jobScenario('gerçek Flow gibi: sormadan kendi partiliyor', 'composer=pm&s
 // Rate-limit errors: wait, then ask Flow to retry the failed prompts, not just "Devam et".
 await jobScenario('istek limiti hatası: yeniden denetiyor', 'composer=textarea&failFirst=25,26,27',
   { throttleWaitMs: 1500 }, 'GEN D R KONTROL RENAME E E ADKONTROL');
+// Third real run: an unknown question ("geçmemi ister misiniz?") and the
+// prompts echoed back with words like "all", "ready", "done" in them.
+await jobScenario('bilinmeyen soru + promptlar sohbette tekrar görünüyor', 'composer=pm&real3=1', {},
+  'GEN D D KONTROL RENAME E E ADKONTROL', 45,
+  makePrompts(45).map((p) => `${p}, all ready, the work is done, everything complete`));
 await jobScenario('Flow eksik bitirip "tamamı" diyor', 'composer=pm&self=1&stopEarlyAt=40', {}, 'GEN D KONTROL RENAME ADKONTROL');
 
 // Without a job: answers "Devam edeyim mi?" on its own, but only when enabled.
