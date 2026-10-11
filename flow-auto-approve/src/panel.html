@@ -33,7 +33,7 @@
       <strong id="promptCount">0 prompt</strong>
       <span>
         <button id="loadFile" class="link" type="button">📄 .txt yükle</button>
-        <input id="file" type="file" accept=".txt,text/plain" hidden>
+        <input id="file" class="file" type="file" accept=".txt,text/plain" hidden>
       </span>
     </div>
     <ol id="promptPeek" class="peek"></ol>
@@ -206,7 +206,12 @@
       <summary>Gönderilecek mesajları önizle</summary>
       <div id="preview"></div>
     </details>
-    <button id="restore" class="link" type="button">Varsayılanlara dön</button>
+    <div class="buttons">
+      <button id="exportSettings" type="button">Ayarları dosyaya kaydet</button>
+      <button id="importSettings" type="button">Dosyadan yükle</button>
+      <input id="settingsFile" class="file" type="file" accept=".json,application/json" hidden>
+      <button id="restore" class="link" type="button">Varsayılanlara dön</button>
+    </div>
   </details>
 
   <footer id="saved" class="muted">Ayarlar otomatik kaydedilir.</footer>

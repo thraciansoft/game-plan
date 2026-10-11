@@ -237,6 +237,11 @@ await jobScenario('gerçek Flow gibi: sormadan kendi partiliyor', 'composer=pm&s
   await page.close();
 }
 
+// Flow answers the name check with the exact sentence we asked for, after a
+// pause longer than the turn-end time: no extra "Evet, devam et".
+await jobScenario('ad kontrolü: istenen cümle aynen + düşünme arası', 'composer=textarea&think=4000',
+  { turnEndIdleMs: 2000, downloadAfter: false }, 'GEN D D KONTROL RENAME E E ADKONTROL');
+
 // Rate-limit errors: wait, then ask Flow to retry the failed prompts, not just "Devam et".
 await jobScenario('istek limiti hatası: yeniden denetiyor', 'composer=textarea&failFirst=25,26,27',
   { throttleWaitMs: 1500 }, 'GEN D R KONTROL RENAME E E ADKONTROL');
@@ -280,6 +285,18 @@ await jobScenario('Flow eksik bitirip "tamamı" diyor', 'composer=pm&self=1&stop
   await panel.goto(`chrome-extension://${extId}/src/panel.html?tabId=${tabId}`);
   const text = makePrompts(45).map((p, i) => (i === 3 ? `${p}\nikinci satır` : p)).join('\n\n');
   await panel.fill('#prompts', text);
+  // Timing settings survive closing and reopening the panel.
+  const openAdvanced = () => panel.evaluate(() => document.querySelectorAll('details').forEach((d) => { d.open = true; }));
+  await openAdvanced();
+  await panel.fill('#turnEndIdleMs', '7000');
+  await panel.fill('#questionIdleMs', '1500');
+  await panel.goto(`chrome-extension://${extId}/src/panel.html?tabId=${tabId}`);
+  check('panel: ayarlar kapatıp açınca korunuyor',
+    (await panel.inputValue('#turnEndIdleMs')) === '7000' && (await panel.inputValue('#questionIdleMs')) === '1500');
+  await openAdvanced();
+  await panel.fill('#turnEndIdleMs', '2000');
+  await panel.fill('#questionIdleMs', '300');
+  await panel.waitForTimeout(600);
   const count = await panel.textContent('#promptCount');
   check('panel: promptlar boş satırdan ayrıldı', count.startsWith('45 prompt'), count);
   await panel.fill('#prompts', makeTimecoded(144).join('\n'));

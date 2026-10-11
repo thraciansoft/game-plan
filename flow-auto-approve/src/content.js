@@ -32,6 +32,7 @@
   const STANDALONE_COOLDOWN_MS = 6000;
   const QUESTION_TTL_MS = 60000;
   const RETRY_DELAY_MS = 5000;
+  const THINK_GRACE_MS = 60000; // silence right after our message before we nudge again
   const NEAR_PX = 250; // max on-screen distance between the chat box and its buttons
   const TICK_MS = 500;
 
@@ -57,6 +58,7 @@
     lastNode: null,
     transcript: '',
     markAt: Date.now(),
+    sentAt: 0, // when we last sent a chat message
     echo: '', // the message we just sent, so its chat bubble is not read as the agent's
   };
 
@@ -332,7 +334,7 @@
       if (ok) {
         mon.transcript = '';
         mon.lastText = 0;
-        mon.markAt = mon.lastAny = Date.now();
+        mon.markAt = mon.lastAny = mon.sentAt = Date.now();
         lastNote = '';
       }
       return ok;
@@ -401,7 +403,12 @@
   let echoCache = { id: null, text: '' };
   function agentSentences() {
     if (job && echoCache.id !== job.id) {
-      echoCache = { id: job.id, text: faaNormalize(job.steps.map((st) => st.text).join(' ')) };
+      // Quoted parts are what we ask Flow to answer with ("Tüm 84 görselin adı
+      // doğru"), so Flow saying them is not an echo.
+      echoCache = {
+        id: job.id,
+        text: faaNormalize(job.steps.map((st) => st.text.replace(/"[^"]*"/g, ' ')).join(' ')),
+      };
     }
     const echo = job ? echoCache.text : mon.echo;
     return mon.transcript.split(/(?<=[.!?])\s+|\n/).map((x) => x.trim())
@@ -561,6 +568,9 @@
       return jobReply(step, 'soru algılandı');
     }
     if (now - mon.lastAny < settings.turnEndIdleMs) return;
+    // Flow has not written anything since our message: it is probably still
+    // thinking, so give it longer before treating the silence as the end.
+    if (!agentSentences().length && now - mon.sentAt < THINK_GRACE_MS) return;
     // Flow went quiet without a question we know. Move on only when it said
     // the whole step is done; otherwise it stopped early or is waiting in
     // other words, so nudge it on (jobReply pauses if this keeps happening).

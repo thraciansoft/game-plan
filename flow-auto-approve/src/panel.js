@@ -47,6 +47,7 @@ function readForm() {
 
 async function saveSettings() {
   clearTimeout(saveTimer);
+  saveTimer = null;
   settings = Object.assign(faaMergeSettings(settings), readForm());
   await chrome.storage.local.set({ settings });
   $('saved').textContent = 'Kaydedildi ✓';
@@ -353,12 +354,43 @@ async function init() {
     renderPromptInfo();
     saveDraft();
   });
-  document.querySelectorAll('input:not(#file), textarea:not(#prompts), select').forEach((el) => {
+  document.querySelectorAll('input:not(.file), textarea:not(#prompts), select').forEach((el) => {
     el.addEventListener('input', () => {
       renderPromptInfo();
       clearTimeout(saveTimer);
       saveTimer = setTimeout(saveSettings, 400);
     });
+    el.addEventListener('change', () => saveSettings());
+  });
+  // Closing the panel right after typing must not lose the change.
+  const flush = () => {
+    if (saveTimer) saveSettings();
+  };
+  window.addEventListener('pagehide', flush);
+  document.addEventListener('visibilitychange', () => document.hidden && flush());
+
+  $('exportSettings').addEventListener('click', () => {
+    const blob = new Blob([JSON.stringify(readForm(), null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'flow-oto-onay-ayarlar.json';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  });
+  $('importSettings').addEventListener('click', () => $('settingsFile').click());
+  $('settingsFile').addEventListener('change', async () => {
+    const file = $('settingsFile').files[0];
+    $('settingsFile').value = '';
+    if (!file) return;
+    try {
+      settings = faaMergeSettings(JSON.parse(await file.text()));
+      fillForm(settings);
+      await chrome.storage.local.set({ settings });
+      renderPromptInfo();
+      $('saved').textContent = 'Ayarlar dosyadan yüklendi ✓';
+    } catch {
+      showError('Ayar dosyası okunamadı.');
+    }
   });
 
   $('loadFile').addEventListener('click', () => $('file').click());

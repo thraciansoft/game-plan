@@ -50,6 +50,7 @@
   const FAIL_FIRST = new Set((params.get('failFirst') || '').split(',').filter(Boolean).map(Number));
   const failed = [];
   const BATCH = Number(params.get('batch') || 20);
+  const THINK_MS = Number(params.get('think') || 0); // silence before some answers
   const STEP_MS = Number(params.get('stepMs') || 30);
 
   const state = { queue: [], images: [], messages: [], phase: 'idle', busy: false, renamePrefix: '' };
@@ -258,7 +259,9 @@
     if (/gözden geçir/i.test(text)) {
       for (const im of state.images) if (!im.name) { im.name = nameOf(im.n); setTileName(im.el, im.name); }
       const total = Number((text.match(/ile \D*?(\d+) arasındaki/) || [])[1]);
-      return agentSay(`Tüm ${total} görselin adı doğru.`);
+      // Real Flow answers with exactly the quoted sentence, no full stop, after thinking a while.
+      await sleep(THINK_MS);
+      return agentSay(`Tüm ${total} görselin adı doğru`);
     }
     if (/kontrol et/i.test(text)) {
       const have = new Set(state.images.map((im) => im.n));
