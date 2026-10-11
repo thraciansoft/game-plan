@@ -2,7 +2,7 @@ const LIST_FIELDS = ['triggerPhrases', 'donePhrases', 'failurePhrases', 'sendPhr
 const TEXT_FIELDS = [
   'promptSplit', 'replyText', 'retryText', 'repairTemplate', 'renameCheckTemplate', 'renameReplyText', 'namePrefix', 'generateTemplate', 'renameTemplate', 'inputSelector', 'sendSelector',
 ];
-const NUMBER_FIELDS = ['batchSize', 'promptsPerMessage', 'maxExtraReplies', 'questionIdleMs', 'turnEndIdleMs', 'throttleWaitMs'];
+const NUMBER_FIELDS = ['nameDigits', 'batchSize', 'promptsPerMessage', 'maxExtraReplies', 'questionIdleMs', 'turnEndIdleMs', 'throttleWaitMs'];
 const CHECK_FIELDS = ['autoReply', 'repairAfter', 'renameAfter', 'renameCheckAfter', 'debug'];
 const STATUS_TEXT = { running: 'Çalışıyor', paused: 'Duraklatıldı', done: 'Tamamlandı', stopped: 'Durduruldu' };
 
@@ -39,7 +39,7 @@ function readForm() {
   s.batchSize = Math.max(1, s.batchSize);
   s.turnEndIdleMs = Math.max(1000, s.turnEndIdleMs);
   CHECK_FIELDS.forEach((k) => { s[k] = $(k).checked; });
-  ['promptSplit', 'replyText', 'retryText', 'repairTemplate', 'renameCheckTemplate', 'renameReplyText', 'namePrefix', 'generateTemplate', 'renameTemplate'].forEach((k) => {
+  ['promptSplit', 'replyText', 'retryText', 'repairTemplate', 'renameCheckTemplate', 'renameReplyText', 'generateTemplate', 'renameTemplate'].forEach((k) => {
     if (!s[k].trim()) s[k] = FAA_DEFAULTS[k];
   });
   return s;
@@ -88,7 +88,7 @@ function renderPromptInfo() {
     }
     peek.append(li);
   });
-  $('nameExample').textContent = `${s.namePrefix}1, ${s.namePrefix}2…`;
+  $('nameExample').textContent = `${faaImageName(1, s)}, ${faaImageName(2, s)} … ${faaImageName(Math.max(prompts.length, 3), s)}`;
   $('replyEcho').textContent = s.replyText;
 
   const preview = $('preview');
@@ -274,16 +274,18 @@ function render() {
   $('barFill').style.width = `${Math.round((doneSteps / total) * 100)}%`;
   $('replies').textContent = status === 'done'
     ? `Toplam ${job.totalReplies || 0} onay verildi.`
-    : `Bu adımda onay: ${job.replies}/${step.expected} · toplam: ${job.totalReplies || 0}` +
+    : `Bu adımda yazılan onay: ${job.replies} (Flow sormadan da devam edebilir) · toplam: ${job.totalReplies || 0}` +
       (job.stepSent ? '' : ' · mesaj henüz gönderilmedi');
 
   let liveText = '';
   if (orphan) {
     liveText = 'Flow sekmesi yenilenmiş; görev bu sekmede çalışmıyor. Devam etmek için Sürdür\'e basın.';
   } else if (status === 'running' && live?.owner) {
-    if (live.busy) liveText = 'Flow çalışıyor…';
-    else if (live.asked) liveText = `Flow onay istiyor; ${live.textIdleSec} sn'dir değişmedi.`;
-    else if (job.stepSent) liveText = `Sayfa ${live.idleSec} sn'dir sakin (adım ${Math.round(settings.turnEndIdleMs / 1000)} sn sonra bitmiş sayılır).`;
+    const pr = live.progress;
+    const prText = pr ? `Flow'un son bildirdiği parti: ${pr.range[0]}–${pr.range[1]} / ${job.promptCount}. ` : '';
+    if (live.busy) liveText = `${prText}Flow çalışıyor…`;
+    else if (live.asked) liveText = `${prText}Flow onay istiyor; ${live.textIdleSec} sn'dir değişmedi.`;
+    else if (job.stepSent) liveText = `${prText}Sayfa ${live.idleSec} sn'dir sakin (adım ${Math.round(settings.turnEndIdleMs / 1000)} sn sonra bitmiş sayılır).`;
     if (!live.hasInput) liveText = 'Sohbet kutusu bulunamadı!';
   }
   $('live').textContent = liveText;

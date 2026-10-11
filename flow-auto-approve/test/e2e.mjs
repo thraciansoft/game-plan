@@ -75,6 +75,11 @@ const makeTimecoded = (n) => Array.from({ length: n }, (_, i) =>
     JSON.stringify(d.prompts) === JSON.stringify(['bir iki satırlı prompt', 'üç', 'dört']), JSON.stringify(d.prompts));
   const e = split('kedi\nköpek\nkuş');
   check('ayırma: boş satır yoksa her satır bir prompt', e.mode === 'line' && e.prompts.length === 3);
+  const merge = vm.runInContext('(x) => faaMergeSettings(x)', shared);
+  const old = merge({ namePrefix: 'gorsel', renameTemplate: 'adı {onek}1 … {onek}{toplam}' });
+  check('ayarlar: eski "gorsel1" ayarı 001 biçimine geçti', old.namePrefix === '' && !old.renameTemplate.includes('{onek}1'));
+  check('ayarlar: yeni kaydedilen önek korunur', merge({ namePrefix: 'img', nameDigits: 3 }).namePrefix === 'img');
+  check('ad: 1 → 001, 144 → 144', vm.runInContext('[faaImageName(1, FAA_DEFAULTS), faaImageName(144, FAA_DEFAULTS)].join()', shared) === '001,144');
   const f = split('kedi\nköpek', 'blank');
   check('ayırma: elle "boş satır" seçilince tek prompt', f.prompts.length === 1);
 }
@@ -126,15 +131,15 @@ function kinds(messages) {
   }).join(' ');
 }
 
-function checkImages(name, st, n) {
+function checkImages(name, st, n, nameOf = (k) => String(k).padStart(3, '0')) {
   const ordered = st.images.length === n && st.images.every((im, i) => im.n === i + 1);
-  const named = st.images.every((im) => im.name === `gorsel${im.n}`);
+  const named = st.images.every((im) => im.name === nameOf(im.n));
   check(`${name}: ${n} görsel prompt sırasıyla oluştu`, ordered, `adet=${st.images.length}`);
-  check(`${name}: gorsel1…gorsel${n} olarak adlandırıldı`, named,
-    st.images.filter((im) => im.name !== `gorsel${im.n}`).slice(0, 3).map((im) => `${im.n}:${im.name}`).join(' '));
+  check(`${name}: ${nameOf(1)}…${nameOf(n)} olarak adlandırıldı`, named,
+    st.images.filter((im) => im.name !== nameOf(im.n)).slice(0, 3).map((im) => `${im.n}:${im.name}`).join(' '));
 }
 
-async function jobScenario(name, query, patch, expectedKinds, n = 45, prompts = makePrompts(n)) {
+async function jobScenario(name, query, patch, expectedKinds, n = 45, prompts = makePrompts(n), nameOf = undefined) {
   await reset(patch);
   const { page, tabId } = await openFlow(query);
   const res = await startJob(tabId, prompts);
@@ -143,7 +148,7 @@ async function jobScenario(name, query, patch, expectedKinds, n = 45, prompts = 
   const st = await mock(page);
   check(`${name}: görev başladı ve bitti`, res?.ok && job?.status === 'done', job?.note || job?.status);
   check(`${name}: mesaj sırası doğru`, kinds(st.messages) === expectedKinds, kinds(st.messages));
-  checkImages(name, st, n);
+  checkImages(name, st, n, nameOf);
   await page.close();
 }
 
@@ -153,11 +158,26 @@ await jobScenario('textarea + durdur butonu', 'composer=textarea', {}, 'GEN D D 
 await jobScenario('zengin editör + Enter, durdur butonu yok, sonda da soruyor',
   'composer=ce&stop=0&askAtEnd=1', {}, 'GEN D D KONTROL RENAME E E ADKONTROL');
 await jobScenario('tanınmayan soru cümlesi (tur sonu kuralı)', 'composer=textarea&odd=1', {}, 'GEN D D KONTROL RENAME E E ADKONTROL');
+await jobScenario('önek + 4 basamak (gorsel0001)', 'composer=textarea', { namePrefix: 'gorsel', nameDigits: 4 },
+  'GEN D D KONTROL RENAME E E ADKONTROL', 45, makePrompts(45), (k) => `gorsel${String(k).padStart(4, '0')}`);
 await jobScenario('mesaj başına 20 prompt', 'composer=textarea', { promptsPerMessage: 20 }, 'GEN GEN GEN KONTROL RENAME E E ADKONTROL');
 // The real Flow: never asks, runs every batch itself and ends with
 // "Listedeki 45 sahnenin tamamı … oluşturuldu" (ProseMirror box, arrow_forward button).
 await jobScenario('gerçek Flow gibi: sormadan kendi partiliyor', 'composer=pm&self=1', {}, 'GEN KONTROL RENAME ADKONTROL');
 // Flow claims "the 40 scenes are all done" with 45 prompts: not finished, so "Devam et".
+// Flow moving on without asking: the panel still sees which batch it is on.
+{
+  await reset();
+  const { page, tabId } = await openFlow('composer=pm&self=1&stepMs=60');
+  await startJob(tabId, makePrompts(45));
+  await page.waitForFunction(() => mockState.images.length >= 25, null, { timeout: 30000 });
+  const st = await worker.evaluate((id) => chrome.tabs.sendMessage(id, { type: 'faa:status' }), tabId);
+  check('ilerleme: Flow sormadan geçince parti görünüyor', JSON.stringify(st.progress?.range) === '[21,40]',
+    JSON.stringify(st.progress));
+  await waitJob('done');
+  await page.close();
+}
+
 // Rate-limit errors: wait, then ask Flow to retry the failed prompts, not just "Devam et".
 await jobScenario('istek limiti hatası: yeniden denetiyor', 'composer=textarea&failFirst=25,26,27',
   { throttleWaitMs: 1500 }, 'GEN D R KONTROL RENAME E E ADKONTROL');

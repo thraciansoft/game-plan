@@ -24,7 +24,7 @@ var FAA_DEFAULTS = {
   // After renaming, ask Flow to go over every image and fix names it missed.
   renameCheckAfter: true,
   renameCheckTemplate:
-    'Şimdi projedeki tüm görsellerin adlarını gözden geçir. Adı {onek}1 ile {onek}{toplam} arasındaki ' +
+    'Şimdi projedeki tüm görsellerin adlarını gözden geçir. Adı {ilk} ile {son} arasındaki ' +
     'biçimde olmayan her görseli, oluşturulduğu prompt numarasına göre yeniden adlandır. Görseli hiç olmayan ' +
     'bir prompt varsa önce o görseli oluştur, sonra adlandır. Hepsi doğruysa "Tüm {toplam} görselin adı doğru" diye yaz.',
   // When Flow reports failures (rate limit, errors), wait longer and ask it to retry.
@@ -34,17 +34,21 @@ var FAA_DEFAULTS = {
     'atlanan', 'eksik kalan', 'failed', 'rate limit', 'quota', 'too many requests',
   ],
   throttleWaitMs: 90000,
-  namePrefix: 'gorsel',
+  // Names are prefix + number padded to this many digits: '' and 3 -> 001, 002 … 144.
+  namePrefix: '',
+  nameDigits: 3,
   // Placeholders: {adet} prompts in this message, {parti} batch size,
   // {baslangic}/{bitis} first/last prompt number, {toplam} all prompts,
-  // {onek} name prefix, {promptlar} the numbered prompt list.
+  // {onek} name prefix, {ilk}/{ikinci}/{son} the first, second and last image
+  // name, {basamak} digits, {promptlar} the numbered prompt list.
   generateTemplate:
     'Aşağıda numaralı {adet} prompt var. Her prompt için 1 görsel oluştur ve numara sırasını bozma. ' +
     'Görselleri {parti} adetlik partiler halinde oluştur.\n\n{promptlar}',
   renameTemplate:
     'Şimdi oluşturduğun {toplam} görseli prompt numarasına göre yeniden adlandır: ' +
-    '1. prompttan oluşan görselin adı {onek}1, 2. prompttan oluşanın adı {onek}2 olsun ' +
-    've bu şekilde son görsel {onek}{toplam} olana kadar devam et. Her seferde {parti} görsel adlandır.',
+    '1. prompttan oluşan görselin adı {ilk}, 2. prompttan oluşanın adı {ikinci} olsun ' +
+    've bu şekilde son görsel {son} olana kadar devam et. Numaralar başında sıfırlarla {basamak} basamaklı ' +
+    'olsun (ör. {ilk}). Adlara başka bir şey ekleme. Her seferde {parti} görsel adlandır.',
   // Text in the agent's latest message that means it is waiting for a "yes".
   // Substring match, case- and diacritic-insensitive.
   triggerPhrases: [
@@ -80,7 +84,20 @@ var FAA_DEFAULTS = {
 };
 
 function faaMergeSettings(stored) {
-  return Object.assign({}, FAA_DEFAULTS, stored || {});
+  const s = Object.assign({}, FAA_DEFAULTS, stored || {});
+  // Settings saved before numbered names existed used "gorsel1"; switch them to 001.
+  if (stored && stored.nameDigits === undefined) s.namePrefix = FAA_DEFAULTS.namePrefix;
+  // Templates saved before names were numbered ({onek}1 …) are replaced with
+  // the current ones.
+  for (const k of ['renameTemplate', 'renameCheckTemplate']) {
+    if (/\{onek\}(1|\{toplam\})/.test(s[k])) s[k] = FAA_DEFAULTS[k];
+  }
+  return s;
+}
+
+// Image name for prompt number n: prefix + n padded with zeros.
+function faaImageName(n, s) {
+  return `${s.namePrefix || ''}${String(n).padStart(Math.max(0, Number(s.nameDigits) || 0), '0')}`;
 }
 
 function faaNormalize(text) {
@@ -164,7 +181,7 @@ function faaBuildSteps(prompts, s) {
       kind: 'generate',
       label: chunk.length === total ? `Üretim: ${total} prompt` : `Üretim: prompt ${start}–${end}`,
       text: faaFill(s.generateTemplate, {
-        adet: chunk.length, parti: batch, baslangic: start, bitis: end, toplam: total, onek: s.namePrefix,
+        adet: chunk.length, parti: batch, baslangic: start, bitis: end, toplam: total, onek: s.namePrefix, ilk: faaImageName(1, s), ikinci: faaImageName(2, s), son: faaImageName(total, s), basamak: s.nameDigits,
         promptlar: chunk.map((p, j) => `${start + j}. ${p}`).join('\n\n'),
       }),
       expected: Math.ceil(chunk.length / batch) - 1,
@@ -176,7 +193,7 @@ function faaBuildSteps(prompts, s) {
       kind: 'repair',
       label: `Kontrol: eksik/başarısız görseller (1–${total})`,
       text: faaFill(s.repairTemplate, {
-        adet: total, parti: batch, baslangic: 1, bitis: total, toplam: total, onek: s.namePrefix, promptlar: '',
+        adet: total, parti: batch, baslangic: 1, bitis: total, toplam: total, onek: s.namePrefix, ilk: faaImageName(1, s), ikinci: faaImageName(2, s), son: faaImageName(total, s), basamak: s.nameDigits, promptlar: '',
       }),
       expected: 0,
       counts: [total],
@@ -185,9 +202,9 @@ function faaBuildSteps(prompts, s) {
   if (s.renameAfter && total) {
     steps.push({
       kind: 'rename',
-      label: `İsimlendirme: ${s.namePrefix}1–${s.namePrefix}${total}`,
+      label: `İsimlendirme: ${faaImageName(1, s)}–${faaImageName(total, s)}`,
       text: faaFill(s.renameTemplate, {
-        adet: total, parti: batch, baslangic: 1, bitis: total, toplam: total, onek: s.namePrefix, promptlar: '',
+        adet: total, parti: batch, baslangic: 1, bitis: total, toplam: total, onek: s.namePrefix, ilk: faaImageName(1, s), ikinci: faaImageName(2, s), son: faaImageName(total, s), basamak: s.nameDigits, promptlar: '',
       }),
       expected: Math.ceil(total / batch) - 1,
       counts: [total],
@@ -196,9 +213,9 @@ function faaBuildSteps(prompts, s) {
   if (s.renameAfter && s.renameCheckAfter && total) {
     steps.push({
       kind: 'renamecheck',
-      label: `Ad kontrolü: ${s.namePrefix}1–${s.namePrefix}${total}`,
+      label: `Ad kontrolü: ${faaImageName(1, s)}–${faaImageName(total, s)}`,
       text: faaFill(s.renameCheckTemplate, {
-        adet: total, parti: batch, baslangic: 1, bitis: total, toplam: total, onek: s.namePrefix, promptlar: '',
+        adet: total, parti: batch, baslangic: 1, bitis: total, toplam: total, onek: s.namePrefix, ilk: faaImageName(1, s), ikinci: faaImageName(2, s), son: faaImageName(total, s), basamak: s.nameDigits, promptlar: '',
       }),
       expected: 0,
       counts: [total],

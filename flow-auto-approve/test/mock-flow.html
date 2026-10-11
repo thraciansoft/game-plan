@@ -53,6 +53,7 @@
 
   const state = { queue: [], images: [], messages: [], phase: 'idle', busy: false, renamePrefix: '' };
   window.mockState = state;
+  const nameOf = (n) => `${state.renamePrefix}${String(n).padStart(state.nameDigits || 1, '0')}`;
 
   const log = document.getElementById('log');
   const grid = document.getElementById('grid');
@@ -120,7 +121,7 @@
         : `İlk ${Math.min(BATCH, todo.length)} görseli yeniden adlandırıyorum.`);
       setBusy(true);
       for (const im of todo.slice(i, i + BATCH)) {
-        im.name = `${state.renamePrefix}${im.n}`;
+        im.name = `${nameOf(im.n)}`;
         im.el.textContent = im.name;
         await sleep(STEP_MS);
       }
@@ -128,7 +129,7 @@
     state.phase = 'idle';
     const n = state.images.length;
     await agentSay(`Oluşturulan ${n} görselin tamamı 20'şerli partiler halinde sırasıyla ` +
-      `${state.renamePrefix}1'den ${state.renamePrefix}${n}'e kadar yeniden adlandırıldı.`);
+      `${nameOf(1)}'den ${nameOf(n)}'e kadar yeniden adlandırıldı.`);
   }
 
   async function runGeneration() {
@@ -191,7 +192,7 @@
     let done = 0;
     const todo = state.images.filter((im) => !im.name).sort((a, b) => a.n - b.n);
     for (const im of todo.slice(0, BATCH)) {
-      im.name = `${state.renamePrefix}${im.n}`;
+      im.name = `${nameOf(im.n)}`;
       im.el.textContent = im.name;
       done++;
       progress.textContent = `ad ${done}/${BATCH}`;
@@ -222,9 +223,8 @@
       return runGeneration();
     }
     if (/gözden geçir/i.test(text)) {
-      const prefix = state.renamePrefix || 'gorsel';
-      for (const im of state.images) if (!im.name) { im.name = `${prefix}${im.n}`; im.el.textContent = im.name; }
-      const total = Number((text.match(/ile \S+?(\d+) arasındaki/) || [])[1]);
+      for (const im of state.images) if (!im.name) { im.name = nameOf(im.n); im.el.textContent = im.name; }
+      const total = Number((text.match(/ile \D*?(\d+) arasındaki/) || [])[1]);
       return agentSay(`Tüm ${total} görselin adı doğru.`);
     }
     if (/kontrol et/i.test(text)) {
@@ -235,7 +235,9 @@
       return agentSay(`Tüm ${total} promptun görseli hazır.`);
     }
     if (/adland|isimlendir/i.test(text)) {
-      state.renamePrefix = (text.match(/adı\s+(\S+?)1\b/) || [])[1] || 'img';
+      const first = (text.match(/adı\s+([^\s,]+)/) || [])[1] || 'img1';
+      state.renamePrefix = first.replace(/\d+$/, '');
+      state.nameDigits = (first.match(/\d+$/) || ['1'])[0].length;
       await agentSay('Tamam, görselleri yeniden adlandırıyorum.');
       return runRename();
     }

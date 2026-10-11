@@ -363,9 +363,28 @@
         if (!text || text.length > MAX_CHUNK_CHARS || !/\p{L}/u.test(text) || isEcho(text)) continue;
         mon.lastText = now;
         mon.lastNode = n;
-        mon.transcript = `${mon.transcript} ${text}`.slice(-20000);
+        // One line per piece of new text, so separate messages never merge into one sentence.
+        mon.transcript = `${mon.transcript}\n${text}`.slice(-20000);
+        trackProgress(text);
       }
     }
+  }
+
+  // The batch Flow last said it is working on ("Sıradaki 20 görseli (41 - 60
+  // arası) oluşturuyorum", "İlk 20 …"), shown in the side panel even when Flow
+  // moves on without asking.
+  function trackProgress(text) {
+    if (!job || text.length > 300) return;
+    const total = job.promptCount || Infinity;
+    let range = null;
+    for (const m of text.matchAll(/(\d+)\s*(?:-|–|ile)\s*(\d+)/g)) {
+      const from = Number(m[1]);
+      const to = Number(m[2]);
+      if (from >= 1 && to > from && to <= total) range = [from, to];
+    }
+    const first = text.match(/\bilk (\d+)\b/);
+    if (!range && first && Number(first[1]) <= total) range = [1, Number(first[1])];
+    if (range) mon.progress = { range, at: Date.now(), step: job.stepIndex };
   }
 
   const agentAsked = () => !!mon.transcript && hasTrigger(mon.transcript.slice(-600));
@@ -384,7 +403,7 @@
       echoCache = { id: job.id, text: faaNormalize(job.steps.map((st) => st.text).join(' ')) };
     }
     const echo = job ? echoCache.text : mon.echo;
-    return mon.transcript.split(/(?<=[.!?])\s+/).map((x) => x.trim())
+    return mon.transcript.split(/(?<=[.!?])\s+|\n/).map((x) => x.trim())
       .filter((x) => x && !(x.length >= 8 && echo.includes(x.replace(/^\d+\.\s*/, ''))));
   }
 
@@ -657,6 +676,7 @@
           idleSec: Math.round((Date.now() - mon.lastAny) / 1000),
           textIdleSec: Math.round((Date.now() - Math.max(mon.lastText, mon.markAt)) / 1000),
           asked: agentAsked(),
+          progress: mine && mon.progress?.step === job.stepIndex ? mon.progress : null,
         };
       case 'faa:diagnose': {
         const report = diagnose();

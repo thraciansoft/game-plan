@@ -2,7 +2,7 @@
 
 Promptlarınızı Google Flow'un sohbetine toplu gönderir. Flow'un her partiden
 sonra sorduğu onayları kendisi verir. Bütün görseller bitince de görselleri
-prompt sırasına göre `gorsel1`, `gorsel2`… diye adlandırtır.
+prompt sırasına göre `001`, `002`… diye adlandırtır.
 
 ## Nasıl çalışır?
 
@@ -22,12 +22,12 @@ prompt sırasına göre `gorsel1`, `gorsel2`… diye adlandırtır.
    arasındaki her promptu kontrol eder ve görseli olmayan ya da başarısız
    olanları yeniden üretir.
 4. Ardından eklenti şu isimlendirme mesajını gönderir: *"1. prompttan oluşan
-   görselin adı gorsel1, 2. prompttan oluşanın adı gorsel2 olsun … son görsel
-   gorsel120"*.
+   görselin adı 001, 2. prompttan oluşanın adı 002 olsun … son görsel
+   120"*.
 5. Flow her 20 görselde bir "Kalanları isimlendireyim mi?" diye sorar. Eklenti
    **Evet, devam et** yazar.
 6. Son olarak bir **ad kontrolü** mesajı gider: Flow bütün görsellerin adlarını
-   gözden geçirir ve `gorselN` biçiminde olmayanları düzeltir.
+   gözden geçirir ve `001` biçiminde olmayanları düzeltir.
 7. Bitince panelde **Tamamlandı** yazar.
 
 Kontrol adımlarını paneldeki onay kutularından kapatabilirsiniz. Mesaj
@@ -64,7 +64,9 @@ yazdığı mesajı göndermek için sohbet kutusunun gönder butonudur.
    Kutunun altında kaç prompt algılandığını, ilk iki ve son promptu görürsünüz.
    **Başlatmadan önce bu sayıyı kontrol edin.** Yanlışsa **Ayırma** menüsünden
    biçimi elle seçin.
-4. **Parti büyüklüğü** (20) ve **İsim öneki** (`gorsel`) değerlerini kontrol edin.
+4. **Parti büyüklüğü** (20), **İsim öneki** (varsayılan boş) ve **Basamak** (3)
+   değerlerini kontrol edin. Boş önek + 3 basamak `001…144` verir; önek `gorsel`
+   yazarsanız `gorsel001…` olur.
 5. **▶ Başlat**'a basın. İlerlemeyi ve yapılan her adımı panelde görürsünüz.
 
 | Buton | İşlevi |

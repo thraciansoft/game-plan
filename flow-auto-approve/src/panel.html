@@ -44,8 +44,11 @@
       <label class="field">Parti büyüklüğü
         <input type="number" id="batchSize" min="1" step="1">
       </label>
-      <label class="field">İsim öneki
-        <input type="text" id="namePrefix">
+      <label class="field">İsim öneki <small>(boş olabilir)</small>
+        <input type="text" id="namePrefix" placeholder="ör. gorsel">
+      </label>
+      <label class="field">Basamak
+        <input type="number" id="nameDigits" min="0" max="6" step="1">
       </label>
     </div>
     <label class="check"><input type="checkbox" id="repairAfter">
@@ -149,7 +152,7 @@
     <label class="field">İsimlendirme mesajı şablonu
       <textarea id="renameTemplate" rows="4"></textarea>
     </label>
-    <p class="muted">Yer tutucular: {adet} {parti} {baslangic} {bitis} {toplam} {onek} {promptlar}</p>
+    <p class="muted">Yer tutucular: {adet} {parti} {baslangic} {bitis} {toplam} {onek} {ilk} {ikinci} {son} {basamak} {promptlar}</p>
     <label class="field">Tetik ifadeleri <small>(Flow'un sorusunda geçen metin, her satıra bir tane)</small>
       <textarea id="triggerPhrases" rows="5"></textarea>
     </label>
