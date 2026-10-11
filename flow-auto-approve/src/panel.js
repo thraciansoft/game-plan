@@ -1,9 +1,9 @@
 const LIST_FIELDS = ['triggerPhrases', 'donePhrases', 'failurePhrases', 'sendPhrases', 'stopPhrases'];
 const TEXT_FIELDS = [
-  'promptSplit', 'replyText', 'retryText', 'repairTemplate', 'renameCheckTemplate', 'renameReplyText', 'namePrefix', 'generateTemplate', 'renameTemplate', 'inputSelector', 'sendSelector',
+  'promptSplit', 'replyText', 'retryText', 'repairTemplate', 'renameCheckTemplate', 'downloadFolder', 'renameReplyText', 'namePrefix', 'generateTemplate', 'renameTemplate', 'inputSelector', 'sendSelector',
 ];
 const NUMBER_FIELDS = ['nameDigits', 'batchSize', 'promptsPerMessage', 'maxExtraReplies', 'questionIdleMs', 'turnEndIdleMs', 'throttleWaitMs'];
-const CHECK_FIELDS = ['autoReply', 'repairAfter', 'renameAfter', 'renameCheckAfter', 'debug'];
+const CHECK_FIELDS = ['autoReply', 'repairAfter', 'renameAfter', 'renameCheckAfter', 'downloadAfter', 'stripDownloadTimestamp', 'debug'];
 const STATUS_TEXT = { running: 'Çalışıyor', paused: 'Duraklatıldı', done: 'Tamamlandı', stopped: 'Durduruldu' };
 
 const $ = (id) => document.getElementById(id);
@@ -31,7 +31,7 @@ function readForm() {
     s[k] = $(k).value.split('\n').map((l) => l.trim()).filter(Boolean);
   });
   TEXT_FIELDS.forEach((k) => { s[k] = $(k).value; });
-  ['replyText', 'renameReplyText', 'namePrefix', 'inputSelector', 'sendSelector'].forEach((k) => { s[k] = s[k].trim(); });
+  ['replyText', 'renameReplyText', 'namePrefix', 'downloadFolder', 'inputSelector', 'sendSelector'].forEach((k) => { s[k] = s[k].trim(); });
   NUMBER_FIELDS.forEach((k) => {
     const n = Number($(k).value);
     s[k] = $(k).value !== '' && Number.isFinite(n) && n >= 0 ? Math.round(n) : FAA_DEFAULTS[k];
@@ -39,7 +39,7 @@ function readForm() {
   s.batchSize = Math.max(1, s.batchSize);
   s.turnEndIdleMs = Math.max(1000, s.turnEndIdleMs);
   CHECK_FIELDS.forEach((k) => { s[k] = $(k).checked; });
-  ['promptSplit', 'replyText', 'retryText', 'repairTemplate', 'renameCheckTemplate', 'renameReplyText', 'generateTemplate', 'renameTemplate'].forEach((k) => {
+  ['promptSplit', 'replyText', 'retryText', 'repairTemplate', 'renameCheckTemplate', 'downloadFolder', 'renameReplyText', 'generateTemplate', 'renameTemplate'].forEach((k) => {
     if (!s[k].trim()) s[k] = FAA_DEFAULTS[k];
   });
   return s;
@@ -90,6 +90,7 @@ function renderPromptInfo() {
   });
   $('nameExample').textContent = `${faaImageName(1, s)}, ${faaImageName(2, s)} … ${faaImageName(Math.max(prompts.length, 3), s)}`;
   $('replyEcho').textContent = s.replyText;
+  $('folderEcho').textContent = s.downloadFolder || '';
 
   const preview = $('preview');
   preview.textContent = '';
@@ -188,6 +189,21 @@ async function control(type) {
   const status = type === 'faa:stop' ? 'stopped' : 'paused';
   const log = [...(job.log || []), { t: Date.now(), msg: STATUS_TEXT[status] }];
   await chrome.storage.local.set({ job: { ...job, status, owner: null, log } });
+}
+
+async function downloadNow() {
+  showError('');
+  $('downloadNow').disabled = true;
+  $('downloadNow').textContent = '⬇ İndiriliyor…';
+  try {
+    const res = await sendTo(await targetTabId(), { type: 'faa:download-all' });
+    if (!res) return showError(NOT_FLOW);
+    if (!res.ok) return showError(res.error);
+    reportMessage(res.summary);
+  } finally {
+    $('downloadNow').disabled = false;
+    $('downloadNow').textContent = '⬇ Görselleri indir';
+  }
 }
 
 async function fetchReport(full) {
@@ -358,6 +374,7 @@ async function init() {
   $('next').addEventListener('click', () => control('faa:next'));
   $('clear').addEventListener('click', () => chrome.storage.local.remove('job'));
   $('copyReport').addEventListener('click', copyReport);
+  $('downloadNow').addEventListener('click', downloadNow);
   $('downloadReport').addEventListener('click', downloadReport);
   $('restore').addEventListener('click', async () => {
     settings = faaMergeSettings();

@@ -7,7 +7,8 @@
   body { font-family: sans-serif; margin: 0; display: flex; height: 100vh; }
   main { flex: 1; overflow: auto; padding: 12px; }
   #grid { display: grid; grid-template-columns: repeat(8, 70px); gap: 4px; }
-  #grid figure { margin: 0; width: 70px; height: 50px; background: #9cf; font-size: 10px; }
+  #grid figure, #grid flow-grid-tile-container { display: block; margin: 0; width: 70px; height: 50px; background: #9cf; font-size: 10px; overflow: hidden; }
+  #grid img { width: 70px; height: 36px; display: block; }
   aside { width: 380px; display: flex; flex-direction: column; border-left: 1px solid #ccc; }
   #log { flex: 1; overflow: auto; padding: 8px; }
   .msg { margin: 6px 0; padding: 6px 8px; border-radius: 8px; background: #eee; white-space: pre-wrap; max-height: 120px; overflow: hidden; }
@@ -53,6 +54,17 @@
 
   const state = { queue: [], images: [], messages: [], phase: 'idle', busy: false, renamePrefix: '' };
   window.mockState = state;
+  // Gallery tiles shaped like Flow's: aria-label, img[data-media-id], .footer-title.
+  function makeTile(n) {
+    const el = document.createElement('flow-grid-tile-container');
+    el.setAttribute('aria-label', `#${n}`);
+    el.innerHTML = `<img class="image" data-media-id="m${n}" src="/media/${n}.png"><span class="footer-title">#${n}</span>`;
+    return el;
+  }
+  function setTileName(el, name) {
+    el.setAttribute('aria-label', name);
+    el.querySelector('.footer-title').textContent = name;
+  }
   const nameOf = (n) => `${state.renamePrefix}${String(n).padStart(state.nameDigits || 1, '0')}`;
 
   const log = document.getElementById('log');
@@ -96,8 +108,7 @@
       setBusy(true);
       for (let n = from; n <= to; n++) {
         const p = state.queue.shift();
-        const fig = document.createElement('figure');
-        fig.textContent = `#${p.n}`;
+        const fig = makeTile(p.n);
         grid.appendChild(fig);
         state.images.push({ n: p.n, prompt: p.text, name: '', el: fig });
         progress.textContent = `${n - from + 1}/${to - from + 1}`;
@@ -122,7 +133,7 @@
       setBusy(true);
       for (const im of todo.slice(i, i + BATCH)) {
         im.name = `${nameOf(im.n)}`;
-        im.el.textContent = im.name;
+        setTileName(im.el, im.name);
         await sleep(STEP_MS);
       }
     }
@@ -149,8 +160,7 @@
         await sleep(STEP_MS);
         continue;
       }
-      const fig = document.createElement('figure');
-      fig.textContent = `#${p.n}`;
+      const fig = makeTile(p.n);
       grid.appendChild(fig);
       state.images.push({ n: p.n, prompt: p.text, name: '', el: fig });
       progress.textContent = `${made}/${BATCH}`;
@@ -193,7 +203,7 @@
     const todo = state.images.filter((im) => !im.name).sort((a, b) => a.n - b.n);
     for (const im of todo.slice(0, BATCH)) {
       im.name = `${nameOf(im.n)}`;
-      im.el.textContent = im.name;
+      setTileName(im.el, im.name);
       done++;
       progress.textContent = `ad ${done}/${BATCH}`;
       await sleep(STEP_MS);
@@ -223,7 +233,7 @@
       return runGeneration();
     }
     if (/gözden geçir/i.test(text)) {
-      for (const im of state.images) if (!im.name) { im.name = nameOf(im.n); im.el.textContent = im.name; }
+      for (const im of state.images) if (!im.name) { im.name = nameOf(im.n); setTileName(im.el, im.name); }
       const total = Number((text.match(/ile \D*?(\d+) arasındaki/) || [])[1]);
       return agentSay(`Tüm ${total} görselin adı doğru.`);
     }

@@ -501,6 +501,23 @@
     const now = Date.now();
     if (now < retryAt) return;
 
+    if (step.kind === 'download') {
+      // Done by the extension itself, nothing is sent to the chat.
+      if (agentBusy()) return;
+      job.stepSent = true;
+      addLog('Görseller galeriden indiriliyor…');
+      await saveJob();
+      sending = true;
+      try {
+        const r = await downloadImages(step.names);
+        addLog(downloadSummary(r));
+        toast(`${r.ok}/${r.total} görsel indirildi`, r.ok < r.total);
+      } finally {
+        sending = false;
+      }
+      return nextStep('indirme bitti');
+    }
+
     if (!job.stepSent) {
       if (agentBusy() || now - mon.lastAny < 1000) return; // wait for a quiet moment
       if (!(await send(step.text))) return sendFailed();
@@ -554,6 +571,122 @@
     } catch (err) {
       console.warn(TAG, err);
     }
+  }
+
+  // -------------------------------------------------------------- download
+
+  function scrollableAncestor(el) {
+    for (let n = el.parentElement; n; n = n.parentElement) {
+      const style = getComputedStyle(n);
+      if (/(auto|scroll)/.test(style.overflowY) && n.scrollHeight > n.clientHeight + 10) return n;
+    }
+    return document.scrollingElement;
+  }
+
+  // Gallery tiles: <flow-grid-tile-container aria-label="001"> … <img data-media-id>
+  // … <span class="footer-title">001</span>.
+  function visibleTiles() {
+    return deepQueryAll('img[data-media-id]').map((img) => {
+      const tile = img.closest('[aria-label]');
+      const name = (tile?.querySelector('.footer-title')?.textContent || tile?.getAttribute('aria-label') || '').trim();
+      return { img, name, src: img.currentSrc || img.src };
+    }).filter((t) => t.name && t.src);
+  }
+
+  // The gallery only renders what is on screen, so scroll through it.
+  async function collectTiles(wanted) {
+    const found = new Map();
+    const take = () => {
+      for (const t of visibleTiles()) {
+        if (!found.has(t.name)) found.set(t.name, { src: t.src, w: t.img.naturalWidth, h: t.img.naturalHeight });
+      }
+    };
+    const first = deepQueryAll('img[data-media-id]')[0];
+    if (!first) return found;
+    const scroller = scrollableAncestor(first);
+    const start = scroller.scrollTop;
+    scroller.scrollTop = 0;
+    await sleep(800);
+    for (let i = 0; i < 500; i++) {
+      take();
+      if (wanted && wanted.every((n) => found.has(n))) break;
+      const before = scroller.scrollTop;
+      scroller.scrollTop += Math.max(200, scroller.clientHeight * 0.7);
+      await sleep(600);
+      if (scroller.scrollTop === before) {
+        await sleep(800);
+        take();
+        break;
+      }
+    }
+    scroller.scrollTop = start;
+    return found;
+  }
+
+  async function asDataUrl(src) {
+    const res = await fetch(src, { credentials: 'include' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const blob = await res.blob();
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  function projectFolder() {
+    const title = document.title.replace(/^\s*Google Flow\s*[-–—]\s*/i, '');
+    const name = faaSafeName(title) || location.pathname.split('/').pop();
+    return [faaSafeName(settings.downloadFolder), name].filter(Boolean).join('/');
+  }
+
+  // Downloads the gallery images; `wanted` (names like "001") limits and orders them.
+  async function downloadImages(wanted) {
+    const found = await collectTiles(wanted);
+    const names = wanted || [...found.keys()].sort((a, b) => a.localeCompare(b, 'tr', { numeric: true }));
+    const folder = projectFolder();
+    let ok = 0;
+    const missing = [];
+    const failed = [];
+    let size = '';
+    for (const name of names) {
+      const tile = found.get(name);
+      if (!tile) {
+        missing.push(name);
+        continue;
+      }
+      const ext = /png/i.test(tile.src.slice(0, 40)) ? 'png' : 'jpg';
+      const filename = `${folder}/${faaSafeName(name)}.${ext}`;
+      let res = null;
+      if (/^https?:/.test(tile.src)) {
+        res = await chrome.runtime.sendMessage({ type: 'faa:download', url: tile.src, filename }).catch(() => null);
+      }
+      if (!res?.ok) {
+        // blob:/data: images, or links the browser refuses without the page's context.
+        try {
+          res = await chrome.runtime.sendMessage({ type: 'faa:download', url: await asDataUrl(tile.src), filename });
+        } catch {
+          res = null;
+        }
+      }
+      if (res?.ok) {
+        ok++;
+        if (!size && tile.w) size = `${tile.w}×${tile.h}`;
+      } else {
+        failed.push(name);
+      }
+    }
+    return { ok, total: names.length, missing, failed, folder, size };
+  }
+
+  function downloadSummary(r) {
+    const list = (a) => (a.length > 12 ? `${a.slice(0, 12).join(', ')} … (+${a.length - 12})` : a.join(', '));
+    let text = `${r.ok}/${r.total} görsel İndirilenler/${r.folder} klasörüne indirildi`;
+    if (r.size) text += ` (önizleme boyutu ${r.size})`;
+    if (r.missing.length) text += `. Galeride bulunamayan: ${list(r.missing)}`;
+    if (r.failed.length) text += `. İndirilemeyen: ${list(r.failed)}`;
+    return `${text}.`;
   }
 
   // ---------------------------------------------------------- diagnostics
@@ -678,6 +811,17 @@
           asked: agentAsked(),
           progress: mine && mon.progress?.step === job.stepIndex ? mon.progress : null,
         };
+      case 'faa:download-all': {
+        if (sending) return { ok: false, error: 'Eklenti şu an meşgul, biraz sonra tekrar deneyin.' };
+        sending = true;
+        try {
+          const r = await downloadImages(null);
+          toast(`${r.ok}/${r.total} görsel indirildi`, r.ok < r.total);
+          return { ok: true, summary: r.total ? downloadSummary(r) : 'Galeride görsel bulunamadı.' };
+        } finally {
+          sending = false;
+        }
+      }
       case 'faa:diagnose': {
         const report = diagnose();
         if (msg.full) report.html = pageSnapshot();

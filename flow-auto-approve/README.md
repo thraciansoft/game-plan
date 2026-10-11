@@ -28,7 +28,18 @@ prompt sırasına göre `001`, `002`… diye adlandırtır.
    **Evet, devam et** yazar.
 6. Son olarak bir **ad kontrolü** mesajı gider: Flow bütün görsellerin adlarını
    gözden geçirir ve `001` biçiminde olmayanları düzeltir.
-7. Bitince panelde **Tamamlandı** yazar.
+7. En sonda eklenti Flow galerisini baştan sona kaydırır. Adı 001…120 olan her
+   görseli `İndirilenler/Flow/<proje adı>/001.jpg` biçiminde bilgisayarınıza
+   indirir.
+8. Bitince panelde **Tamamlandı** yazar. Kaç görselin indiği ve bulunamayan
+   numaralar panel kaydında görünür.
+
+İstediğiniz an paneldeki **⬇ Görselleri indir** ile galerideki görselleri
+adlarıyla indirebilirsiniz. Flow'un kendi indirme düğmesini kullanırsanız
+eklenti, Flow'un dosya adına eklediği tarihi siler:
+`001_20261011093000.jpg` → `001.jpg`.
+
+Chrome ilk indirmede birden fazla dosya indirmeye izin isteyebilir; izin verin.
 
 Kontrol adımlarını paneldeki onay kutularından kapatabilirsiniz. Mesaj
 metinlerini Gelişmiş ayarlardan değiştirebilirsiniz.

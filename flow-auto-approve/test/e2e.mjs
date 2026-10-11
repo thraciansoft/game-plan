@@ -32,8 +32,12 @@ const context = await chromium.launchPersistentContext(mkdtempSync(path.join(tmp
   headless: true,
   args: [`--disable-extensions-except=${extDir}`, `--load-extension=${extDir}`],
 });
-await context.route(/^https:\/\/(flow\.google\.com|labs\.google)\//, (route) =>
-  route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: mockHtml }));
+// A 1×1 PNG stands in for every generated image.
+const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+const serveMock = (route) => (route.request().url().includes('/media/')
+  ? route.fulfill({ status: 200, contentType: 'image/png', body: PNG })
+  : route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: mockHtml }));
+await context.route(/^https:\/\/(flow\.google\.com|labs\.google)\//, serveMock);
 let worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
 const extId = new URL(worker.url()).host;
 
@@ -154,7 +158,28 @@ async function jobScenario(name, query, patch, expectedKinds, n = 45, prompts = 
 
 // 45 prompts -> Flow stops after 20 and 40: two "Devam et", then the rename
 // step with two "Evet, devam et".
+await worker.evaluate(() => {
+  globalThis.__faaAsked = [];
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg?.type === 'faa:download') globalThis.__faaAsked.push(msg.filename);
+    return false;
+  });
+});
 await jobScenario('textarea + durdur butonu', 'composer=textarea', {}, 'GEN D D KONTROL RENAME E E ADKONTROL');
+{
+  // The last step downloaded every image as Downloads/Flow/<project>/001.png …
+  // Playwright saves downloads under its own names, so check the names the
+  // extension asked for, and that every one of those downloads completed.
+  const { asked, done } = await worker.evaluate(async () => ({
+    asked: globalThis.__faaAsked || [],
+    done: (await chrome.downloads.search({ state: 'complete' })).length,
+  }));
+  const names = [...new Set(asked.filter((f) => f.startsWith('Flow/Mock Flow/')).map((f) => f.split('/').pop()))].sort();
+  check('indirme: tamamlanan indirme sayısı', done >= 45, String(done));
+  const want = Array.from({ length: 45 }, (_, i) => `${String(i + 1).padStart(3, '0')}.png`);
+  check('indirme: 45 görsel Flow/Mock Flow/001.png… olarak indi', JSON.stringify(names) === JSON.stringify(want),
+    `${names.length} dosya, ilk: ${names[0]}`);
+}
 await jobScenario('zengin editör + Enter, durdur butonu yok, sonda da soruyor',
   'composer=ce&stop=0&askAtEnd=1', {}, 'GEN D D KONTROL RENAME E E ADKONTROL');
 await jobScenario('tanınmayan soru cümlesi (tur sonu kuralı)', 'composer=textarea&odd=1', {}, 'GEN D D KONTROL RENAME E E ADKONTROL');
@@ -320,8 +345,7 @@ await context.close();
     headless: true,
     args: [`--disable-extensions-except=${variant}`, `--load-extension=${variant}`],
   });
-  await ctx.route(/^https:\/\/flow\.google\.com\//, (route) =>
-    route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: mockHtml }));
+  await ctx.route(/^https:\/\/flow\.google\.com\//, serveMock);
   const w = ctx.serviceWorkers()[0] || await ctx.waitForEvent('serviceworker');
   await w.evaluate(() => chrome.storage.local.set({
     settings: { ...FAA_DEFAULTS, questionIdleMs: 300, turnEndIdleMs: 2000 },

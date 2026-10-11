@@ -57,6 +57,8 @@
       <span>Bitince sırayla isimlendirt (<span id="nameExample">gorsel1, gorsel2…</span>)</span></label>
     <label class="check"><input type="checkbox" id="renameCheckAfter">
       <span>İsimlendirmeden sonra adları kontrol ettir (eksik kalanları düzelttir)</span></label>
+    <label class="check"><input type="checkbox" id="downloadAfter">
+      <span>En sonda bütün görselleri indir (İndirilenler/<span id="folderEcho">Flow</span>/proje adı/001.jpg …)</span></label>
   </section>
 
   <section>
@@ -66,6 +68,7 @@
       <button id="resume" type="button">⏵ Sürdür</button>
       <button id="next" type="button" title="Mevcut adımı bitmiş say ve sıradaki mesajı gönder">⏭ Sonraki adım</button>
       <button id="stop" type="button">■ Durdur</button>
+      <button id="downloadNow" type="button" title="Galerideki görselleri adlarıyla şimdi indir">⬇ Görselleri indir</button>
       <button id="clear" class="link" type="button">Temizle</button>
     </div>
     <p id="error" class="note" hidden></p>
@@ -129,6 +132,13 @@
       </label>
     </div>
     <p class="muted">"Tur bitti sayma": Flow soru sormadan durursa sayfa bu kadar süre tamamen sakin kaldığında adım bitmiş sayılır.</p>
+    <div class="row">
+      <label class="field">İndirme klasörü <small>(İndirilenler içinde)</small>
+        <input type="text" id="downloadFolder">
+      </label>
+    </div>
+    <label class="check"><input type="checkbox" id="stripDownloadTimestamp">
+      <span>Flow'dan elle indirilen dosyalarda tarih ekini sil (001_20261011093000.jpg → 001.jpg)</span></label>
     <label class="field">Hata sonrası cevap <small>(Flow başarısız/limit derse)</small>
       <input type="text" id="retryText">
     </label>

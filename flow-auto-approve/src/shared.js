@@ -27,6 +27,11 @@ var FAA_DEFAULTS = {
     'Şimdi projedeki tüm görsellerin adlarını gözden geçir. Adı {ilk} ile {son} arasındaki ' +
     'biçimde olmayan her görseli, oluşturulduğu prompt numarasına göre yeniden adlandır. Görseli hiç olmayan ' +
     'bir prompt varsa önce o görseli oluştur, sonra adlandır. Hepsi doğruysa "Tüm {toplam} görselin adı doğru" diye yaz.',
+  // At the end, download every image named 001…N into Downloads/<folder>/<project>/.
+  downloadAfter: true,
+  downloadFolder: 'Flow',
+  // Flow's own downloads are saved as "001_20261010233313.jpg"; drop the timestamp.
+  stripDownloadTimestamp: true,
   // When Flow reports failures (rate limit, errors), wait longer and ask it to retry.
   retryText: 'Başarısız olan ya da atlanan görselleri yeniden dene, sonra kaldığın yerden devam et.',
   failurePhrases: [
@@ -221,5 +226,20 @@ function faaBuildSteps(prompts, s) {
       counts: [total],
     });
   }
+  if (s.downloadAfter && total) {
+    steps.push({
+      kind: 'download',
+      label: `İndirme: ${faaImageName(1, s)}–${faaImageName(total, s)}`,
+      text: '',
+      expected: 0,
+      counts: [total],
+      names: Array.from({ length: total }, (_, i) => faaImageName(i + 1, s)),
+    });
+  }
   return steps;
+}
+
+// File-system-safe single path segment.
+function faaSafeName(text) {
+  return String(text || '').replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80);
 }
