@@ -27,6 +27,17 @@ var FAA_DEFAULTS = {
     'Şimdi projedeki tüm görsellerin adlarını gözden geçir. Adı {ilk} ile {son} arasındaki ' +
     'biçimde olmayan her görseli, oluşturulduğu prompt numarasına göre yeniden adlandır. Görseli hiç olmayan ' +
     'bir prompt varsa önce o görseli oluştur, sonra adlandır. Hepsi doğruysa "Tüm {toplam} görselin adı doğru" diye yaz.',
+  // After the images are done (and named), make a video from each image with
+  // its own prompt, using the chosen Flow video model.
+  videoAfter: false,
+  videoEngine: 'Veo 3.1 - Fast',
+  videoBatchSize: 10,
+  videoTemplate:
+    'Şimdi görsellerden video oluştur. Aşağıdaki listedeki her numara için, o numaralı prompttan ' +
+    'oluşturduğun görseli (adı {ilk} biçiminde) başlangıç karesi olarak kullan ve aynı numaradaki promptu ' +
+    'video promptu olarak kullanarak görselden videoya bir video oluştur. Video modeli: {motor}. ' +
+    'Videoları {vparti} adetlik partiler halinde oluştur ve her videoyu görselin adının sonuna _v ekleyerek ' +
+    'adlandır (ör. {ilk}_v). Toplam {toplam} video.\n\n{promptlar}',
   // At the end, download every image named 001…N into Downloads/<folder>/<project>/.
   downloadAfter: true,
   downloadFolder: 'Flow',
@@ -223,6 +234,20 @@ function faaBuildSteps(prompts, s) {
         adet: total, parti: batch, baslangic: 1, bitis: total, toplam: total, onek: s.namePrefix, ilk: faaImageName(1, s), ikinci: faaImageName(2, s), son: faaImageName(total, s), basamak: s.nameDigits, promptlar: '',
       }),
       expected: 0,
+      counts: [total],
+    });
+  }
+  if (s.videoAfter && total) {
+    const vbatch = Math.max(1, Number(s.videoBatchSize) || 1);
+    steps.push({
+      kind: 'video',
+      label: `Video (${s.videoEngine}): ${faaImageName(1, s)}_v–${faaImageName(total, s)}_v`,
+      text: faaFill(s.videoTemplate, {
+        adet: total, parti: batch, vparti: vbatch, motor: s.videoEngine, baslangic: 1, bitis: total, toplam: total,
+        onek: s.namePrefix, ilk: faaImageName(1, s), ikinci: faaImageName(2, s), son: faaImageName(total, s),
+        basamak: s.nameDigits, promptlar: prompts.map((p, i) => `${faaImageName(i + 1, s)}. ${p}`).join('\n\n'),
+      }),
+      expected: Math.ceil(total / vbatch) - 1,
       counts: [total],
     });
   }

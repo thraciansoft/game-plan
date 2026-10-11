@@ -28,10 +28,17 @@ prompt sırasına göre `001`, `002`… diye adlandırtır.
    **Evet, devam et** yazar.
 6. Son olarak bir **ad kontrolü** mesajı gider: Flow bütün görsellerin adlarını
    gözden geçirir ve `001` biçiminde olmayanları düzeltir.
-7. En sonda eklenti Flow galerisini baştan sona kaydırır. Adı 001…120 olan her
+7. **Video (isteğe bağlı):** Paneldeki **Görseller bitince video** anahtarı
+   açıksa, eklenti Flow'a seçtiğiniz video motoruyla (Omni 1.1 Flash,
+   Veo 3.1 - Lite / Fast / Quality) her görselden, aynı numaralı promptu
+   kullanarak görselden videoya video ürettirir. Videolar `001_v`, `002_v`…
+   diye adlandırılır. Partiler varsayılan olarak 10'ar videodur. Flow her
+   partide sorarsa eklenti yine **Devam et** yazar. Videolar görsellerden çok
+   daha fazla kredi harcar.
+8. **İndirme:** Paneldeki **Bitince indir** anahtarı açıksa eklenti en sonda Flow galerisini baştan sona kaydırır. Adı 001…120 olan her
    görseli `İndirilenler/Flow/<proje adı>/001.jpg` biçiminde bilgisayarınıza
    indirir.
-8. Bitince panelde **Tamamlandı** yazar. Kaç görselin indiği ve bulunamayan
+9. Bitince panelde **Tamamlandı** yazar. Kaç görselin indiği ve bulunamayan
    numaralar panel kaydında görünür.
 
 İstediğiniz an paneldeki **⬇ Görselleri indir** ile galerideki görselleri

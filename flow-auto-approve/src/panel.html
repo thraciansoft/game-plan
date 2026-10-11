@@ -57,8 +57,6 @@
       <span>Bitince sırayla isimlendirt (<span id="nameExample">gorsel1, gorsel2…</span>)</span></label>
     <label class="check"><input type="checkbox" id="renameCheckAfter">
       <span>İsimlendirmeden sonra adları kontrol ettir (eksik kalanları düzelttir)</span></label>
-    <label class="check"><input type="checkbox" id="downloadAfter">
-      <span>En sonda bütün görselleri indir (İndirilenler/<span id="folderEcho">Flow</span>/proje adı/001.jpg …)</span></label>
   </section>
 
   <section>
@@ -70,6 +68,23 @@
       <button id="stop" type="button">■ Durdur</button>
       <button id="downloadNow" type="button" title="Galerideki görselleri adlarıyla şimdi indir">⬇ Görselleri indir</button>
       <button id="clear" class="link" type="button">Temizle</button>
+    </div>
+    <label class="toggle"><input type="checkbox" id="downloadAfter"><span class="track"></span>
+      <span>Bitince indir: <b id="downloadState">Açık</b> <small>(İndirilenler/<span id="folderEcho">Flow</span>/proje/001.jpg)</small></span></label>
+    <label class="toggle"><input type="checkbox" id="videoAfter"><span class="track"></span>
+      <span>Görseller bitince video: <b id="videoState">Kapalı</b> <small>(her görsel + kendi promptu)</small></span></label>
+    <div class="row" id="videoRow">
+      <label class="field">Video motoru
+        <select id="videoEngine">
+          <option>Omni 1.1 Flash</option>
+          <option>Veo 3.1 - Lite</option>
+          <option>Veo 3.1 - Fast</option>
+          <option>Veo 3.1 - Quality</option>
+        </select>
+      </label>
+      <label class="field">Video partisi
+        <input type="number" id="videoBatchSize" min="1" step="1">
+      </label>
     </div>
     <p id="error" class="note" hidden></p>
   </section>
@@ -139,6 +154,9 @@
     </div>
     <label class="check"><input type="checkbox" id="stripDownloadTimestamp">
       <span>Flow'dan elle indirilen dosyalarda tarih ekini sil (001_20261011093000.jpg → 001.jpg)</span></label>
+    <label class="field">Video mesajı şablonu <small>({motor} {vparti} de kullanılabilir)</small>
+      <textarea id="videoTemplate" rows="4"></textarea>
+    </label>
     <label class="field">Hata sonrası cevap <small>(Flow başarısız/limit derse)</small>
       <input type="text" id="retryText">
     </label>

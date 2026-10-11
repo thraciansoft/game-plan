@@ -217,11 +217,34 @@
       : 'Tüm görseller isimlendirildi.');
   }
 
+  async function runVideos() {
+    setBusy(true);
+    for (const v of state.videoQueue.splice(0, state.videoBatch)) {
+      const fig = document.createElement('figure');
+      fig.textContent = `${v.name}_v`;
+      grid.appendChild(fig);
+      state.videos.push({ name: `${v.name}_v`, prompt: v.prompt });
+      await sleep(STEP_MS);
+    }
+    state.phase = state.videoQueue.length ? 'video' : 'idle';
+    await agentSay(state.videoQueue.length
+      ? `${state.videos.length} video oluşturuldu. Devam edeyim mi?`
+      : `Tüm ${state.videos.length} video oluşturuldu.`);
+  }
+
   async function onUserMessage(text) {
     if (!text.trim()) return;
     state.messages.push(text);
     bubble(text, 'user');
     await sleep(100);
+    if (/video oluştur/i.test(text)) {
+      state.videoEngine = (text.match(/Video modeli: (.+?)\. /) || [])[1];
+      state.videoBatch = Number((text.match(/(\d+) adetlik/) || [])[1]) || BATCH;
+      state.videoQueue = [...text.matchAll(/^\s*(\d+)[.)]\s+(.+)$/gm)].map((m) => ({ name: m[1], prompt: m[2] }));
+      state.videos = [];
+      await agentSay(`Tamam, ${state.videoQueue.length} video oluşturuyorum.`);
+      return runVideos();
+    }
     const prompts = [...text.matchAll(/^\s*(\d+)[.)]\s+(.+)$/gm)].map((m) => ({ n: Number(m[1]), text: m[2].trim() }));
     if (prompts.length) {
       state.queue.push(...prompts);
@@ -254,6 +277,7 @@
     if (/devam|evet|continue|yes/i.test(text)) {
       if (state.phase === 'gen' && state.queue.length) return runGeneration();
       if (state.phase === 'rename') return runRename();
+      if (state.phase === 'video') return runVideos();
       state.phase = 'idle';
       return agentSay('Yapılacak başka bir şey kalmadı.');
     }

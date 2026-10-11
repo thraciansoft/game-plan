@@ -124,6 +124,7 @@ const mock = (page) => page.evaluate(() => ({
 
 function kinds(messages) {
   return messages.map((m) => {
+    if (m.includes('video oluştur')) return 'VIDEO';
     if (m.includes('numaralı')) return 'GEN';
     if (m.includes('gözden geçir')) return 'ADKONTROL';
     if (m.includes('kontrol et')) return 'KONTROL';
@@ -200,6 +201,24 @@ await jobScenario('gerçek Flow gibi: sormadan kendi partiliyor', 'composer=pm&s
   check('ilerleme: Flow sormadan geçince parti görünüyor', JSON.stringify(st.progress?.range) === '[21,40]',
     JSON.stringify(st.progress));
   await waitJob('done');
+  await page.close();
+}
+
+// Video step: after the images, every image + its own prompt goes to the chosen model.
+{
+  await reset({ videoAfter: true, videoEngine: 'Veo 3.1 - Quality', videoBatchSize: 20, downloadAfter: false });
+  const { page, tabId } = await openFlow('composer=textarea');
+  await startJob(tabId, makePrompts(45));
+  const job = await waitJob('done', 90000);
+  const st = await page.evaluate(() => ({
+    messages: mockState.messages, videos: mockState.videos || [], engine: mockState.videoEngine,
+  }));
+  check('video: mesaj sırası doğru', job?.status === 'done' &&
+    kinds(st.messages) === 'GEN D D KONTROL RENAME E E ADKONTROL VIDEO D D', kinds(st.messages));
+  check('video: 45 video, 001_v…045_v, kendi promptlarıyla', st.videos.length === 45 &&
+    st.videos.every((v, i) => v.name === `${String(i + 1).padStart(3, '0')}_v` && v.prompt === makePrompts(45)[i]),
+    `${st.videos.length} ${st.videos[0]?.name}`);
+  check('video: seçilen motor kullanıldı', st.engine === 'Veo 3.1 - Quality', st.engine);
   await page.close();
 }
 

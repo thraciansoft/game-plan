@@ -1,9 +1,9 @@
 const LIST_FIELDS = ['triggerPhrases', 'donePhrases', 'failurePhrases', 'sendPhrases', 'stopPhrases'];
 const TEXT_FIELDS = [
-  'promptSplit', 'replyText', 'retryText', 'repairTemplate', 'renameCheckTemplate', 'downloadFolder', 'renameReplyText', 'namePrefix', 'generateTemplate', 'renameTemplate', 'inputSelector', 'sendSelector',
+  'promptSplit', 'replyText', 'retryText', 'repairTemplate', 'renameCheckTemplate', 'downloadFolder', 'videoEngine', 'videoTemplate', 'renameReplyText', 'namePrefix', 'generateTemplate', 'renameTemplate', 'inputSelector', 'sendSelector',
 ];
-const NUMBER_FIELDS = ['nameDigits', 'batchSize', 'promptsPerMessage', 'maxExtraReplies', 'questionIdleMs', 'turnEndIdleMs', 'throttleWaitMs'];
-const CHECK_FIELDS = ['autoReply', 'repairAfter', 'renameAfter', 'renameCheckAfter', 'downloadAfter', 'stripDownloadTimestamp', 'debug'];
+const NUMBER_FIELDS = ['videoBatchSize', 'nameDigits', 'batchSize', 'promptsPerMessage', 'maxExtraReplies', 'questionIdleMs', 'turnEndIdleMs', 'throttleWaitMs'];
+const CHECK_FIELDS = ['autoReply', 'repairAfter', 'renameAfter', 'renameCheckAfter', 'videoAfter', 'downloadAfter', 'stripDownloadTimestamp', 'debug'];
 const STATUS_TEXT = { running: 'Çalışıyor', paused: 'Duraklatıldı', done: 'Tamamlandı', stopped: 'Durduruldu' };
 
 const $ = (id) => document.getElementById(id);
@@ -39,7 +39,7 @@ function readForm() {
   s.batchSize = Math.max(1, s.batchSize);
   s.turnEndIdleMs = Math.max(1000, s.turnEndIdleMs);
   CHECK_FIELDS.forEach((k) => { s[k] = $(k).checked; });
-  ['promptSplit', 'replyText', 'retryText', 'repairTemplate', 'renameCheckTemplate', 'downloadFolder', 'renameReplyText', 'generateTemplate', 'renameTemplate'].forEach((k) => {
+  ['promptSplit', 'replyText', 'retryText', 'repairTemplate', 'renameCheckTemplate', 'downloadFolder', 'videoEngine', 'videoTemplate', 'renameReplyText', 'generateTemplate', 'renameTemplate'].forEach((k) => {
     if (!s[k].trim()) s[k] = FAA_DEFAULTS[k];
   });
   return s;
@@ -91,6 +91,9 @@ function renderPromptInfo() {
   $('nameExample').textContent = `${faaImageName(1, s)}, ${faaImageName(2, s)} … ${faaImageName(Math.max(prompts.length, 3), s)}`;
   $('replyEcho').textContent = s.replyText;
   $('folderEcho').textContent = s.downloadFolder || '';
+  $('downloadState').textContent = s.downloadAfter ? 'Açık' : 'Kapalı';
+  $('videoRow').hidden = !s.videoAfter;
+  $('videoState').textContent = s.videoAfter ? `Açık · ${s.videoEngine}` : 'Kapalı';
 
   const preview = $('preview');
   preview.textContent = '';
