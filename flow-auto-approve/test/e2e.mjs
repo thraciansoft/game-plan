@@ -222,6 +222,21 @@ await jobScenario('gerçek Flow gibi: sormadan kendi partiliyor', 'composer=pm&s
   await page.close();
 }
 
+// Switching video on after the job started still adds the video step.
+{
+  await reset({ videoAfter: false, downloadAfter: false, videoBatchSize: 20 });
+  const { page, tabId } = await openFlow('composer=textarea');
+  await startJob(tabId, makePrompts(25));
+  await page.waitForTimeout(1500);
+  await worker.evaluate(() => chrome.storage.local.get('settings').then(({ settings }) =>
+    chrome.storage.local.set({ settings: { ...settings, videoAfter: true } })));
+  const job = await waitJob('done', 90000);
+  const st = await page.evaluate(() => ({ messages: mockState.messages, videos: (mockState.videos || []).length }));
+  check('çalışan göreve video eklendi', kinds(st.messages) === 'GEN D KONTROL RENAME E ADKONTROL VIDEO D' &&
+    st.videos === 25 && job.steps.length === 5, `${kinds(st.messages)} · ${job?.steps.length} adım`);
+  await page.close();
+}
+
 // Rate-limit errors: wait, then ask Flow to retry the failed prompts, not just "Devam et".
 await jobScenario('istek limiti hatası: yeniden denetiyor', 'composer=textarea&failFirst=25,26,27',
   { throttleWaitMs: 1500 }, 'GEN D R KONTROL RENAME E E ADKONTROL');

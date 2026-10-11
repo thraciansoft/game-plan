@@ -49,7 +49,7 @@ var FAA_DEFAULTS = {
     'başarısız', 'bir hata oluştu', 'throttled', 'istek limiti', 'istek sınırı', 'kota', 'tamamlanamadı',
     'atlanan', 'eksik kalan', 'failed', 'rate limit', 'quota', 'too many requests',
   ],
-  throttleWaitMs: 90000,
+  throttleWaitMs: 45000,
   // Names are prefix + number padded to this many digits: '' and 3 -> 001, 002 … 144.
   namePrefix: '',
   nameDigits: 3,
@@ -103,6 +103,7 @@ function faaMergeSettings(stored) {
   const s = Object.assign({}, FAA_DEFAULTS, stored || {});
   // Settings saved before numbered names existed used "gorsel1"; switch them to 001.
   if (stored && stored.nameDigits === undefined) s.namePrefix = FAA_DEFAULTS.namePrefix;
+  if (stored && stored.throttleWaitMs === 90000) s.throttleWaitMs = FAA_DEFAULTS.throttleWaitMs; // old default
   // Templates saved before names were numbered ({onek}1 …) are replaced with
   // the current ones.
   for (const k of ['renameTemplate', 'renameCheckTemplate']) {

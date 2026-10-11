@@ -45,6 +45,7 @@
   let job = null; // the job this tab runs; null when this tab owns none
   let sending = false;
   let retryAt = 0;
+  let throttleUntil = 0; // waiting for Flow's rate limit to recover
   let lastNote = '';
   let observer = null;
   let tickId = null;
@@ -486,11 +487,26 @@
     await saveJob();
   }
 
+  // The video and download switches also apply to a running job: steps of
+  // those kinds that have not started yet follow the current settings.
+  const OPTIONAL = ['video', 'download'];
+  function syncOptionalSteps() {
+    if (!job?.prompts || job.status === 'done' || job.status === 'stopped') return false;
+    const keep = job.steps.filter((st, i) => i <= job.stepIndex || !OPTIONAL.includes(st.kind));
+    const fresh = faaBuildSteps(job.prompts, settings).filter((st) => OPTIONAL.includes(st.kind)
+      && !keep.some((k, i) => k.kind === st.kind && i <= job.stepIndex));
+    const next = [...keep, ...fresh];
+    const changed = next.map((st) => st.kind).join() !== job.steps.map((st) => st.kind).join();
+    job.steps = next;
+    return changed;
+  }
+
   async function nextStep(reason) {
     addLog(`Adım tamamlandı (${reason}): ${job.steps[job.stepIndex].label}`);
     job.stepIndex++;
     job.stepSent = false;
     job.replies = 0;
+    syncOptionalSteps();
     if (job.stepIndex >= job.steps.length) return finishJob();
     await saveJob();
   }
@@ -534,7 +550,11 @@
     const textIdle = now - Math.max(mon.lastText, mon.markAt);
     // After errors or rate limiting, give Flow's quota time to recover before
     // asking it to retry.
-    if (step.kind !== 'rename' && step.kind !== 'renamecheck' && flowFailed() && now - mon.lastAny < settings.throttleWaitMs) return;
+    if (step.kind !== 'rename' && step.kind !== 'renamecheck' && flowFailed() && now - mon.lastAny < settings.throttleWaitMs) {
+      throttleUntil = mon.lastAny + settings.throttleWaitMs;
+      return;
+    }
+    throttleUntil = 0;
     if (agentAsked() && textIdle >= settings.questionIdleMs) {
       // "Tüm 144 görsel oluşturuldu. Başka bir şey ister misiniz?" is the end, not a batch question.
       if (saysFinished(step)) return nextStep('Flow bitirdiğini söyledi');
@@ -782,6 +802,7 @@
       tabId,
       status: 'running',
       promptCount: prompts.length,
+      prompts,
       steps: faaBuildSteps(prompts, settings),
       stepIndex: 0,
       stepSent: false,
@@ -809,6 +830,7 @@
           idleSec: Math.round((Date.now() - mon.lastAny) / 1000),
           textIdleSec: Math.round((Date.now() - Math.max(mon.lastText, mon.markAt)) / 1000),
           asked: agentAsked(),
+          throttleSec: throttleUntil > Date.now() ? Math.round((throttleUntil - Date.now()) / 1000) : 0,
           progress: mine && mon.progress?.step === job.stepIndex ? mon.progress : null,
         };
       case 'faa:download-all': {
@@ -883,6 +905,10 @@
     if (changes.settings) {
       settings = faaMergeSettings(changes.settings.newValue);
       compiled = compile(settings);
+      if (job && job.owner === instanceId && syncOptionalSteps()) {
+        addLog(`Adımlar güncellendi: ${job.steps.length} adım.`);
+        saveJob().catch(() => {});
+      }
     }
     // Another tab took the job over, or the side panel cleared it.
     if (changes.job && job && changes.job.newValue?.owner !== instanceId) job = null;

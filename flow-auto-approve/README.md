@@ -15,7 +15,7 @@ prompt sırasına göre `001`, `002`… diye adlandırtır.
    karışmaz. Flow "120 sahnenin tamamı oluşturuldu" dediğinde sıradaki adıma
    geçer.
    Flow bir partide "Başarısız / istek limiti (THROTTLED)" derse eklenti
-   kotanın toparlanması için bekler (varsayılan 90 sn). Sonra "Devam et" yerine
+   kotanın toparlanması için bekler (varsayılan 45 sn; panelde geri sayım görünür). Sonra "Devam et" yerine
    **"Başarısız olan ya da atlanan görselleri yeniden dene, sonra kaldığın
    yerden devam et"** yazar.
 3. Üretim bitince eklenti bir **kontrol** mesajı gönderir: Flow 1–120

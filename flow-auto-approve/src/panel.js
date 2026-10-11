@@ -302,7 +302,8 @@ function render() {
   } else if (status === 'running' && live?.owner) {
     const pr = live.progress;
     const prText = pr ? `Flow'un son bildirdiği parti: ${pr.range[0]}–${pr.range[1]} / ${job.promptCount}. ` : '';
-    if (live.busy) liveText = `${prText}Flow çalışıyor…`;
+    if (live.throttleSec) liveText = `${prText}Flow limit hatası verdi; kota toparlansın diye ${live.throttleSec} sn bekleniyor, sonra yeniden denetilecek.`;
+    else if (live.busy) liveText = `${prText}Flow çalışıyor…`;
     else if (live.asked) liveText = `${prText}Flow onay istiyor; ${live.textIdleSec} sn'dir değişmedi.`;
     else if (job.stepSent) liveText = `${prText}Sayfa ${live.idleSec} sn'dir sakin (adım ${Math.round(settings.turnEndIdleMs / 1000)} sn sonra bitmiş sayılır).`;
     if (!live.hasInput) liveText = 'Sohbet kutusu bulunamadı!';
